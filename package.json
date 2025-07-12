@@ -1,0 +1,32 @@
+{
+  "name": "DOMinus",
+  "author": "named666",
+  "version": "0.1.0",
+  "description": "A lightweight and reactive JavaScript library for building modern user interfaces with fine-grained reactivity.",
+  "main": "index.js",
+  "type": "module",
+  "files": [
+    "index.js",
+    "components.js",
+    "state.js",
+    "html.js",
+    "router.js",
+    "render.js",
+    "navigation.js",
+    "form.js",
+    "validation.js"
+  ],
+  "exports": {
+    ".": "./index.js"
+  },
+  "keywords": [
+    "javascript",
+    "frontend",
+    "reactive",
+    "ui",
+    "vanilla-js",
+    "spa",
+    "router"
+  ],
+  "license": "MIT"
+}
