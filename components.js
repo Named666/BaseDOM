@@ -41,10 +41,21 @@ export function createComponent(tag, options = {}) {
 
   const element = document.createElement(tag);
 
+  // Collect all attributes and event handlers from both `attrs` and the top-level options
+  const allAttrs = { ...attrs };
+  for (const key in processedOptions) {
+    if (key.startsWith('on') && typeof processedOptions[key] === 'function') {
+      // Exclude special lifecycle hooks that are not DOM events
+      if (key !== 'onMount' && key !== 'onUnmount' && key !== 'onUpdate') {
+        allAttrs[key] = processedOptions[key];
+      }
+    }
+  }
+
   // handle <form> submit with preventDefault
   if (tag === 'form' && typeof onSubmit === 'function') {
     // remove any raw attrs.onSubmit so applyAttribute won’t double-attach
-    delete attrs.onSubmit;
+    delete allAttrs.onSubmit;
     element.addEventListener('submit', e => {
       e.preventDefault();
       onSubmit(e, element);
@@ -97,7 +108,7 @@ export function createComponent(tag, options = {}) {
   };
 
   // Apply attributes
-  for (const [key, value] of Object.entries(attrs)) {
+  for (const [key, value] of Object.entries(allAttrs)) {
     applyAttribute(element, key, value);
   }
 
