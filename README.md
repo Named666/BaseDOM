@@ -1,6 +1,6 @@
-# DOMinus
+# BaseDOM
 
-DOMinus is a lightweight, modern JavaScript library for building user interfaces with fine-grained reactivity. It offers a simple yet powerful API for creating components, managing state, and handling routing, all without a complex build setup.
+BaseDOM is a lightweight, modern JavaScript library for building user interfaces with fine-grained reactivity. It offers a simple yet powerful API for creating components, managing state, and handling routing, all without a complex build setup.
 
 ## Features
 
@@ -9,14 +9,14 @@ DOMinus is a lightweight, modern JavaScript library for building user interfaces
 - **Advanced Client-Side Routing:** A powerful router for SPAs, supporting nested routes, layouts, route parameters, and navigation guards.
 - **Declarative Form Handling:** A complete solution for creating forms with validation and submission handling.
 - **Global State Management:** Includes `createStore` for managing complex, structured application state.
-- **Lightweight and Performant:** DOMinus is designed to be small and fast, with a minimal footprint and no virtual DOM.
+- **Lightweight and Performant:** BaseDOM is designed to be small and fast, with a minimal footprint and no virtual DOM.
 
 ## Getting Started
 
 ### Installation
 
 ```bash
-npm install dominus
+npm install basedom
 ```
 
 ### Basic Usage
@@ -24,7 +24,7 @@ npm install dominus
 To render a single, simple component:
 
 ```javascript
-import { signal, createComponent, button, p, renderComponent } from 'dominus';
+import { signal, createComponent, button, p, renderComponent } from 'basedom';
 
 // Define a component
 function Counter() {
@@ -50,7 +50,7 @@ renderComponent(Counter(), document.getElementById('app'));
 For a full application with routing, use `startApp`:
 
 ```javascript
-import { defineRoute, startApp, Link, createComponent, div } from 'dominus';
+import { defineRoute, startApp, Link, createComponent, div } from 'basedom';
 
 // Define a simple home component
 const HomeComponent = () => createComponent('h1', 'Home Page');
@@ -59,12 +59,12 @@ const HomeComponent = () => createComponent('h1', 'Home Page');
 defineRoute('/', HomeComponent);
 
 // Start the application
-startApp('#app'); // DOMinus will render the matched route into the #app element
+startApp('#app'); // BaseDOM will render the matched route into the #app element
 ```
 
 ## State Management
 
-DOMinus provides several primitives for managing state.
+BaseDOM provides several primitives for managing state.
 
 ### `signal`
 
@@ -92,7 +92,7 @@ const [name, setName] = signal('user_name', 'Guest');
 An `effect` is a function that runs whenever one of its dependencies (a signal) changes. It's useful for side effects like logging or data fetching.
 
 ```javascript
-import { signal, effect } from 'dominus';
+import { signal, effect } from 'basedom';
 
 const [count, setCount] = signal(0);
 
@@ -108,7 +108,7 @@ setCount(1); // Logs: "The count is now: 1"
 A `computed` value is a read-only signal that derives its value from other signals.
 
 ```javascript
-import { signal, computed } from 'dominus';
+import { signal, computed } from 'basedom';
 
 const [firstName, setFirstName] = signal('John');
 const [lastName, setLastName] = signal('Doe');
@@ -123,11 +123,11 @@ console.log(fullName()); // "John Doe"
 For more complex, global state, `createStore` provides a structured, observable object, ideal for managing data like user sessions or application settings.
 
 ```javascript
-import { createStore } from 'dominus';
+import { createStore } from 'basedom';
 
 const store = createStore({
     values: { isLoggedIn: false, theme: 'light' },
-    tables: { todos: { '1': { text: 'Learn DOMinus' } } }
+    tables: { todos: { '1': { text: 'Learn BaseDOM' } } }
 });
 
 store.addValueListener('theme', (newTheme) => {
@@ -142,7 +142,7 @@ store.setValue('theme', 'dark'); // Logs: "Theme changed to dark"
 Components are functions that return DOM elements. Use `createComponent` for custom elements or the provided HTML helper functions (`div`, `p`, `button`, etc.).
 
 ```javascript
-import { createComponent, h1, p } from 'dominus';
+import { createComponent, h1, p } from 'basedom';
 
 function MyComponent() {
   return createComponent('div', {
@@ -163,10 +163,10 @@ function MyComponent() {
 
 ## Routing
 
-DOMinus includes a client-side router supporting nested routes, layouts, and navigation guards.
+BaseDOM includes a client-side router supporting nested routes, layouts, and navigation guards.
 
 ```javascript
-import { defineRoute, startApp, Link, createComponent, div, main, nav } from 'dominus';
+import { defineRoute, startApp, Link, createComponent, div, main, nav } from 'basedom';
 
 // Layout component with an outlet for child routes
 const AppLayout = (props) => {
@@ -195,10 +195,10 @@ startApp('#app');
 
 ## Forms
 
-DOMinus provides a complete form handling solution with the `Form`, `Field`, and `Submit` components, along with validation helpers.
+BaseDOM provides a complete form handling solution with the `Form`, `Field`, and `Submit` components, along with validation helpers.
 
 ```javascript
-import { Form, Field, Submit, required, minLength, composeValidators } from 'dominus';
+import { Form, Field, Submit, required, minLength, composeValidators } from 'basedom';
 
 function MyForm() {
   const handleSubmit = (values) => {
@@ -256,4 +256,4 @@ Contributions are welcome! Please open an issue or submit a pull request on GitH
 
 ## License
 
-DOMinus is licensed under the MIT License.
+BaseDOM is licensed under the MIT License.
