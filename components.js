@@ -259,15 +259,21 @@ export function createComponent(tag, options = {}) {
         newNodes.forEach(newNode => {
           element.insertBefore(newNode, marker);
           currentChildNodes.push(newNode);
-          // Only call onMount if not already mounted
-          if (typeof newNode.__onMount === 'function' && !mountedNodes.has(newNode)) {
-            try {
-              newNode.__onMount(newNode);
-              mountedNodes.add(newNode);
-            } catch (e) {
-              console.error('onMount in reactive child failed', e);
+          // Call onMount recursively on newly added elements
+          const callOnMountRecursive = (node) => {
+            if (node.__onMount && typeof node.__onMount === 'function' && !mountedNodes.has(node)) {
+              try {
+                node.__onMount(node);
+                mountedNodes.add(node);
+              } catch (e) {
+                console.error('onMount in reactive child failed', e);
+              }
             }
-          }
+            if (node.children) {
+              Array.from(node.children).forEach(callOnMountRecursive);
+            }
+          };
+          callOnMountRecursive(newNode);
         });
       }));
 

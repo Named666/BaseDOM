@@ -115,9 +115,9 @@ export async function renderRoute(pathname) {
         const [cleanPath, queryString] = pathname.split("?");
         const queryParams = parseQuery(queryString || "");
         const routeMatch = findMatchingRoute(cleanPath);
-        console.log('Route match:', routeMatch);
-
+        
         if (routeMatch) {
+            console.log('Route match:', routeMatch);
             const newMatched = routeMatch.matched;
             const newRoutes = newMatched.map(m => m.route);
             const { matched, params } = routeMatch;
