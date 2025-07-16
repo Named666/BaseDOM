@@ -10,27 +10,49 @@ import { signal, effect, computed } from './state.js';
  * @returns {Function} A function that, when called, returns a BaseDOM component.
  */
 export async function parseComponent(htmlText) {
-    const { template, script } = extractParts(htmlText);
+    try {
+        const { template, script } = extractParts(htmlText);
+        // Dynamically import the component's logic
+        const componentModule = await import(`data:text/javascript,${encodeURIComponent(script)}`);
+        const componentLogicFn = componentModule.default;
 
-    // Dynamically import the component's logic
-    const componentModule = await import(`data:text/javascript,${encodeURIComponent(script)}`);
-    const componentLogicFn = componentModule.default;
-
-    // Create a DOM tree from the template
-    const domParser = new DOMParser();
-    const doc = domParser.parseFromString(template, 'text/html');
-    // Support multiple root nodes (fragment) for DSL style
-    const nodes = Array.from(doc.body.childNodes).filter(n => n.nodeType === 1 || n.nodeType === 3); // ELEMENT_NODE or TEXT_NODE
-
-    return (props) => {
-        const context = componentLogicFn(props);
-        if (nodes.length === 1) {
-            return parseNode(nodes[0], context);
-        } else {
-            // Return an array of nodes as a fragment
-            return nodes.map(n => parseNode(n, context));
+        // Validate that the component logic is a function
+        if (typeof componentLogicFn !== 'function') {
+            throw new Error('Component script must export a default function');
         }
-    };
+
+        // Create a DOM tree from the template
+        const domParser = new DOMParser();
+        const doc = domParser.parseFromString(template, 'text/html');
+        // Support multiple root nodes (fragment) for DSL style
+        const nodes = Array.from(doc.body.childNodes).filter(n => n.nodeType === Node.ELEMENT_NODE || n.nodeType === Node.TEXT_NODE);
+
+        return (props) => {
+            const context = componentLogicFn(props || {});
+            
+            if (nodes.length === 1) {
+                // Single root node
+                return parseNode(nodes[0], context);
+            } else if (nodes.length > 1) {
+                // Multiple root nodes - wrap in a fragment
+                const children = nodes.map(n => parseNode(n, context)).filter(Boolean);
+                return Element('div')({ children });
+            } else {
+                // No nodes found
+                return Element('div')({ children: 'No content' });
+            }
+        };
+    } catch (error) {
+        console.error('Error parsing component:', error);
+        // Return a component that displays the error
+        return () => Element('div')({
+            style: { color: 'red', border: '1px solid red', padding: '10px' },
+            children: [
+                Element('h3')('Component Parse Error'),
+                Element('pre')(error.message)
+            ]
+        });
+    }
 }
 
 /**
@@ -62,7 +84,7 @@ function extractParts(htmlText) {
     } else {
         // No script tag, treat all as template
         template = htmlText.trim();
-        script = 'export default function() { return {}; }';
+        script = 'export default function(props) { return {}; }';
     }
 
     // If template is empty, fallback
@@ -86,9 +108,18 @@ const directiveHandlers = {
     'bd-if': (node, context) => {
         const ifDirective = node.getAttribute('bd-if');
         if (ifDirective) {
-            const elseNode = node.nextSibling && node.nextSibling.nodeType === Node.ELEMENT_NODE && node.nextSibling.getAttribute('bd-else') !== null
-                ? node.nextSibling
-                : null;
+            let elseNode = null;
+            let nextSibling = node.nextElementSibling;
+            
+            // Skip text nodes and comments to find the next element
+            while (nextSibling && nextSibling.nodeType !== Node.ELEMENT_NODE) {
+                nextSibling = nextSibling.nextElementSibling;
+            }
+            
+            if (nextSibling && nextSibling.hasAttribute('bd-else')) {
+                elseNode = nextSibling;
+            }
+            
             return handleIfElseDirective(node, ifDirective, elseNode, context);
         }
         return null;
@@ -103,7 +134,11 @@ const directiveHandlers = {
         for (const attr of node.attributes) {
             if (attr.name.startsWith('bd-on:')) {
                 const eventName = attr.name.substring(6);
-                props[`on${eventName.charAt(0).toUpperCase() + eventName.slice(1)}`] = context[attr.value];
+                const handlerName = attr.value;
+                const handler = context[handlerName];
+                if (handler && typeof handler === 'function') {
+                    props[`on${eventName.charAt(0).toUpperCase() + eventName.slice(1)}`] = handler;
+                }
             }
         }
     },
@@ -111,7 +146,15 @@ const directiveHandlers = {
         for (const attr of node.attributes) {
             if (attr.name.startsWith('bd-bind:')) {
                 const propName = attr.name.substring(8);
-                props[propName] = computed(() => context[attr.value]() );
+                const expr = attr.value;
+                const contextValue = context[expr];
+                // Always wrap in a computed signal for consistent reactivity
+                props[propName] = computed(() => {
+                    if (contextValue && typeof contextValue === 'function') {
+                        return contextValue();
+                    }
+                    return contextValue;
+                });
             }
         }
     },
@@ -119,10 +162,17 @@ const directiveHandlers = {
         for (const attr of node.attributes) {
             if (attr.name === 'bd-show') {
                 const showExpr = attr.value;
-                props.style = props.style || {};
+                const contextValue = context[showExpr];
+                if (!props.style) props.style = {};
+                // Always use computed for full reactivity
                 props.style.display = computed(() => {
-                    const showSignal = context[showExpr];
-                    return showSignal && showSignal() ? '' : 'none';
+                    let shouldShow = false;
+                    if (contextValue && typeof contextValue === 'function') {
+                        shouldShow = contextValue();
+                    } else {
+                        shouldShow = !!contextValue;
+                    }
+                    return shouldShow ? '' : 'none';
                 });
             }
         }
@@ -151,6 +201,11 @@ function parseNode(node, context) {
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return null;
 
+    // Prevent bd-else nodes from being processed independently
+    if (node.hasAttribute('bd-else')) {
+        return null;
+    }
+
     // --- Modular directive handling ---
     // Control flow directives (return early if handled)
     for (const key of ['bd-if', 'bd-for']) {
@@ -170,7 +225,7 @@ function parseNode(node, context) {
     directiveHandlers['bd-on'](node, context, props);
     directiveHandlers['bd-bind'](node, context, props);
     directiveHandlers['bd-show'](node, context, props);
-    directiveHandlers['fetch-trigger'](node, context, props, fetchConfig);
+    directiveHandlers['bd-trigger'](node, context, props, fetchConfig);
     directiveHandlers['default'](node, context, props);
 
     // Recursively parse child nodes
@@ -183,66 +238,104 @@ function parseNode(node, context) {
         const method = fetchConfig['bd-post'] ? 'POST' : 'GET';
         const url = fetchConfig['bd-get'] || fetchConfig['bd-post'];
         if (!url) return;
-        let trigger = fetchConfig['bd-trigger'];
-        if (!trigger) trigger = (tagName === 'form' && method === 'POST') ? 'submit' : 'click';
-        el.addEventListener(trigger, async (evt) => {
-            if (tagName === 'form' && method === 'POST') evt.preventDefault();
-            let fetchOpts = { method };
-            if (method === 'POST' && tagName === 'form') {
-                fetchOpts.body = new FormData(el);
+        
+        let trigger = fetchConfig['bd-trigger'] || '';
+        if (!trigger) {
+            trigger = (tagName === 'form' && method === 'POST') ? 'submit' : 'click';
+        }
+        
+        const handleEvent = async (evt) => {
+            if (tagName === 'form' && method === 'POST') {
+                evt.preventDefault();
             }
-            let resp = await fetch(url, fetchOpts);
-            let html = await resp.text();
-            if (fetchConfig['bd-select']) {
-                const temp = document.createElement('div');
-                temp.innerHTML = html;
-                const sel = temp.querySelector(fetchConfig['bd-select']);
-                if (sel) {
-                    if ((fetchConfig['bd-swap']||'').toLowerCase() === 'innerhtml') {
-                        html = sel.innerHTML;
-                    } else {
-                        html = sel.outerHTML;
+            
+            try {
+                let fetchOpts = { method };
+                if (method === 'POST' && tagName === 'form') {
+                    fetchOpts.body = new FormData(el);
+                }
+                
+                const resp = await fetch(url, fetchOpts);
+                if (!resp.ok) {
+                    throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+                }
+                
+                let html = await resp.text();
+                
+                // Handle content selection
+                if (fetchConfig['bd-select']) {
+                    const temp = document.createElement('div');
+                    temp.innerHTML = html;
+                    const sel = temp.querySelector(fetchConfig['bd-select']);
+                    if (sel) {
+                        const swapMode = (fetchConfig['bd-swap'] || '').toLowerCase();
+                        if (swapMode === 'innerhtml') {
+                            html = sel.innerHTML;
+                        } else {
+                            html = sel.outerHTML;
+                        }
                     }
                 }
+                
+                // Determine target element
+                let target = el;
+                if (fetchConfig['bd-target']) {
+                    const targetEl = document.querySelector(fetchConfig['bd-target']);
+                    if (targetEl) target = targetEl;
+                }
+                
+                // Apply the swap strategy
+                const swap = (fetchConfig['bd-swap'] || 'innerHTML').toLowerCase();
+                if (swap === 'outerhtml') {
+                    target.outerHTML = html;
+                } else if (swap === 'append' || swap === 'beforeend') {
+                    target.insertAdjacentHTML('beforeend', html);
+                } else if (swap === 'prepend' || swap === 'afterbegin') {
+                    target.insertAdjacentHTML('afterbegin', html);
+                } else if (swap === 'beforebegin') {
+                    target.insertAdjacentHTML('beforebegin', html);
+                } else if (swap === 'afterend') {
+                    target.insertAdjacentHTML('afterend', html);
+                } else {
+                    target.innerHTML = html;
+                }
+                
+                // Handle URL updates
+                if (fetchConfig['bd-push-url'] === 'true') {
+                    history.pushState({}, '', url);
+                } else if (fetchConfig['bd-replace-url'] === 'true') {
+                    history.replaceState({}, '', url);
+                }
+            } catch (error) {
+                console.error('Fetch trigger error:', error);
+                // Optionally show error to user
             }
-            let target = el;
-            if (el.hasAttribute('bd-target')) {
-                const sel = el.getAttribute('bd-target');
-                const found = document.querySelector(sel);
-                if (found) target = found;
-            }
-            const swap = (fetchConfig['bd-swap'] || 'innerHTML').toLowerCase();
-            if (swap === 'outerhtml') {
-                target.outerHTML = html;
-            } else if (swap === 'append' || swap === 'beforeend') {
-                target.insertAdjacentHTML('beforeend', html);
-            } else if (swap === 'prepend' || swap === 'afterbegin') {
-                target.insertAdjacentHTML('afterbegin', html);
-            } else if (swap === 'beforebegin') {
-                target.insertAdjacentHTML('beforebegin', html);
-            } else if (swap === 'afterend') {
-                target.insertAdjacentHTML('afterend', html);
-            } else {
-                target.innerHTML = html;
-            }
-            if (fetchConfig['bd-push-url'] === 'true') {
-                history.pushState({}, '', url);
-            } else if (fetchConfig['bd-replace-url'] === 'true') {
-                history.replaceState({}, '', url);
-            }
-        });
+        };
+        
+        el.addEventListener(trigger, handleEvent);
     }
 
-    // Compose the component
+    // Compose the component - ensure we always return a BaseDOM component
     const componentFactory = Element(tagName);
     const baseComponent = componentFactory({ ...props, children });
+    
+    // Handle fetch/trigger behavior if present
     if (Object.keys(fetchConfig).some(k => fetchConfig[k])) {
+        // Return a BaseDOM component that sets up the fetch behavior
         return (el) => {
+            // First render the base component
             const result = typeof baseComponent === 'function' ? baseComponent(el) : baseComponent;
-            handleFetchTriggerBehavior(el);
+            
+            // Then set up the fetch behavior on the rendered element
+            if (el && el.addEventListener) {
+                handleFetchTriggerBehavior(el);
+            }
+            
             return result;
         };
     }
+    
+    // Always return a BaseDOM component
     return baseComponent;
 }
 /**
@@ -258,8 +351,16 @@ function handleIfElseDirective(ifNode, condition, elseNode, context) {
     if (elseNode) elseNode.removeAttribute('bd-else');
 
     return computed(() => {
-        const conditionSignal = context[condition];
-        if (conditionSignal && conditionSignal()) {
+        const conditionValue = context[condition];
+        let shouldShow = false;
+        
+        if (conditionValue && typeof conditionValue === 'function') {
+            shouldShow = conditionValue();
+        } else {
+            shouldShow = !!conditionValue;
+        }
+        
+        if (shouldShow) {
             return parseNode(ifNode, context);
         } else if (elseNode) {
             return parseNode(elseNode, context);
@@ -289,10 +390,11 @@ function parseTextNode(text, context) {
         }
         const expr = match[1].trim();
         parts.push(() => {
-            if (context[expr] && typeof context[expr] === 'function') {
-                return context[expr]();
+            const contextValue = context[expr];
+            if (contextValue && typeof contextValue === 'function') {
+                return contextValue();
             }
-            return `{{${expr}}}`;
+            return contextValue !== undefined ? contextValue : `{{${expr}}}`;
         });
         lastIndex = regex.lastIndex;
     }
@@ -319,18 +421,28 @@ function handleForDirective(node, expression, context) {
     const [itemName, listName] = expression.split(' in ').map(s => s.trim());
     
     // Return a function that reactively returns the list of components
-    return () => {
-        const listSignal = context[listName];
-        if (!listSignal) return [];
+    return computed(() => {
+        const listValue = context[listName];
+        let items = [];
+        
+        if (listValue && typeof listValue === 'function') {
+            items = listValue(); // Get the array from the signal
+        } else if (Array.isArray(listValue)) {
+            items = listValue;
+        }
+        
+        if (!Array.isArray(items)) {
+            return [];
+        }
 
-        const items = listSignal(); // Get the array from the signal
-        return items.map(item => {
+        return items.map((item, index) => {
             // For each item, create a new context that includes the loop variable
             const loopContext = {
                 ...context,
-                [itemName]: () => item // Make the item available as a "signal"
+                [itemName]: () => item, // Make the item available as a "signal"
+                [`${itemName}Index`]: () => index // Also provide the index
             };
             return parseNode(node.cloneNode(true), loopContext);
         });
-    };
+    });
 }

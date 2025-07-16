@@ -6,7 +6,6 @@ BaseDOM is a lightweight, modern JavaScript library for building user interfaces
 
 - **Fine-Grained Reactivity:** A `signal`-based system for creating reactive state that automatically and efficiently updates the UI.
 - **Component-Based Architecture:** Build your UI with reusable components that encapsulate their own logic and scoped styles.
-- **Single File Components (SFCs) & DSL:** Define components in `.html` files with a clean, declarative syntax.
 - **Advanced Client-Side Routing:** A powerful router for SPAs, supporting nested routes, layouts, route parameters, and navigation guards.
 - **Declarative Form Handling:** A complete solution for creating forms with validation and submission handling.
 - **Global State Management:** Includes `createStore` for managing complex, structured application state.
@@ -162,136 +161,35 @@ function MyComponent() {
 }
 ```
 
-## Single File Components (SFCs) & DSL
-
-BaseDOM supports defining components in `.html` files using either SFC (Single File Component) or DSL (Domain Specific Language) syntax. This allows you to write your component's template and logic in a single file.
-
-### SFC Syntax
-
-An SFC is an HTML file with a `<template>` and a `<script>` tag.
-
-```html
-<!-- Counter.html -->
-<template>
-  <div>
-    <p>Count: {{ count }}</p>
-    <button bd-on:click="increment">Increment</button>
-  </div>
-</template>
-
-<script>
-  import { signal } from 'basedom';
-
-  export default function() {
-    const [count, setCount] = signal(0);
-    const increment = () => setCount(count() + 1);
-    return { count, increment };
-  }
-</script>
-```
-
-### DSL Syntax
-
-The DSL syntax is more concise, where everything before the `<script>` tag is considered the template.
-
-```html
-<!-- Counter.html -->
-<div>
-  <p>Count: {{ count }}</p>
-  <button bd-on:click="increment">Increment</button>
-</div>
-
-<script>
-  import { signal } from 'basedom';
-
-  export default function() {
-    const [count, setCount] = signal(0);
-    const increment = () => setCount(count() + 1);
-    return { count, increment };
-  }
-</script>
-```
-
-### Using SFCs/DSLs in Routes
-
-You can use these files directly in your route definitions. BaseDOM will automatically fetch, parse, and render them.
-
-```javascript
-import { defineRoute, startApp } from 'basedom';
-
-defineRoute({
-    path: '/',
-    component: '/components/Counter.html' // Path to your component file
-});
-
-startApp('#app');
-```
-
 ## Routing
 
 BaseDOM includes a client-side router supporting nested routes, layouts, and navigation guards.
 
-### `x-outlet`
-The `x-outlet` attribute is used to mark the location where child routes should be rendered. When a nested route is matched, its component will be rendered inside the element with the `x-outlet` attribute.
-
-You can also create named outlets by providing a value to the attribute, e.g., `x-outlet="sidebar"`. This allows you to target specific outlets from your route definitions using the `outlet` property. If no outlet is specified in the route definition, it will default to the main outlet, which is an element with `x-outlet` or `x-outlet="main"`.
-
-### Example
-
-Here is an example of a layout with a main content area and a sidebar, each with its own outlet.
-
-**`layout.html`**
-```html
-<div class="layout">
-    <aside x-outlet="sidebar"></aside>
-    <main x-outlet="main"></main>
-</div>
-```
-
-**`components.js`**
 ```javascript
-import { createComponent, h1, p, ul, li } from 'basedom';
+import { defineRoute, startApp, Link, createComponent, div, main, nav } from 'basedom';
 
-export const MainContent = () => createComponent('div', {
-    children: [
-        h1('Main Content'),
-        p('This is the main content area.')
-    ]
-});
+// Layout component with an outlet for child routes
+const AppLayout = (props) => {
+    return div({
+        children: [
+            nav(Link({ href: '/' }, 'Home'), ' | ', Link({ href: '/users/1' }, 'User 1')),
+            // props.children will render the matched child route
+            main({ attrs: { 'x-outlet': true } }, props.children)
+        ]
+    });
+};
 
-export const Sidebar = () => createComponent('div', {
-    children: [
-        h1('Sidebar'),
-        ul(
-            li('Link 1'),
-            li('Link 2')
-        )
-    ]
-});
-```
-
-**`routes.js`**
-```javascript
-import { defineRoute, startApp } from 'basedom';
-import { MainContent, Sidebar } from './components.js';
-
+// Define routes
 defineRoute({
     path: '/',
-    component: '/layout.html',
+    component: AppLayout,
     children: [
-        {
-            path: '/',
-            component: MainContent,
-            outlet: 'main'
-        },
-        {
-            path: '/',
-            component: Sidebar,
-            outlet: 'sidebar'
-        }
+        { path: '/', component: () => h1('Home') }, // Index route
+        { path: '/users/:id', component: (props) => h1(`User: ${props.params.id}`) }
     ]
 });
 
+// Start the app
 startApp('#app');
 ```
 
@@ -335,7 +233,6 @@ function MyForm() {
 
 - `createComponent(tag, options)`: The core function for creating elements with reactive features.
 - `renderComponent(component, container)`: Renders a component into a container, handling lifecycle hooks.
-- `parseComponent(htmlText)`: Parses an HTML string into a renderable component function.
 - `html.js` provides helpers for all standard HTML tags (`div`, `p`, `h1`, etc.).
 - `Link(options, children)`: A component for internal navigation that works with the router.
 - `List(getItemsFn, getKeyFn, renderItemFn)`: Efficiently renders a list of items with key-based reconciliation.
@@ -360,3 +257,259 @@ Contributions are welcome! Please open an issue or submit a pull request on GitH
 ## License
 
 BaseDOM is licensed under the MIT License.
+
+### TODO:
+Create a DSL that allows you to define components in .html files.
+
+  1. Create a Parser (`parser.js`): This new file will contain the core logic for fetching and parsing .html files. It will transform HTML into a renderable BaseDOM
+      component.
+   2. Define the DSL Syntax: We will establish a set of special HTML attributes (e.g., bd-on:click, bd-if) to bind BaseDOM's reactive features directly within the HTML.
+   3. Implement the Parser Logic: The parser will:
+       * Use the browser's DOMParser to turn an HTML string into a traversable DOM tree.
+       * Recursively walk the tree, converting each HTML element into a BaseDOM component description.
+       * Translate special bd- attributes into event handlers, reactive bindings, and conditional rendering logic.
+   4. Integrate with the Router: We will update router.js to allow route definitions to point directly to an .html file, making the new DSL a first-class citizen for defining
+      pages.
+
+ Example Usage: A "Before and After"
+
+
+  Here’s how a simple component would be built now versus how it could be built with the proposed HTML DSL.
+
+  Before: The Current Programmatic API
+
+  This is how you would write a simple counter component today, with nested JavaScript functions.
+
+  `Counter.js` (Current Method)
+
+```javascript
+import { signal, createComponent, button, p } from 'basedom';
+
+function Counter() {
+  const [count, setCount] = signal(0);
+
+  return createComponent('div', {
+    children: [
+      // The p tag's content is a function, so it reactively updates
+      () => p(`Count: ${count()}`),
+      button({
+        // Event handlers are passed directly
+        onClick: () => setCount(count() + 1),
+        children: 'Increment'
+      })
+    ]
+  });
+}
+```
+
+  After: The Proposed HTML DSL
+
+
+  With the new DSL, you would define the component in a .html file. The structure is plain HTML, and the logic is cleanly separated in a <script> tag.
+
+  `Counter.html` (Proposed Method)
+
+<!-- The component's logic lives in a script tag -->
+<script>
+  import { signal } from 'basedom';
+
+  // Component logic is exported as the default
+  export default function() {
+    const [count, setCount] = signal(0);
+
+    const increment = () => setCount(count() + 1);
+
+    // The script returns the reactive state and methods
+    // that the template needs to access.
+    return { count, increment };
+}
+</script>
+
+
+### BaseDOM HTML DSL Proposal
+
+The BaseDOM HTML DSL introduces a declarative way to define components directly in `.html` files. This approach simplifies the structure of components and allows developers to leverage HTML attributes for reactive bindings, event handling, dynamic rendering, and server interactions.
+
+#### Special Attributes (Directives)
+
+BaseDOM's DSL uses special attributes to bind reactive features, handle events, and interact with the server. These attributes are inspired by Vue directives and HTMX attributes.
+
+---
+
+#### **Reactive Bindings**
+
+- **`bd-bind`**  
+  Binds an HTML attribute to a reactive variable. Similar to Vue's `v-bind`.
+
+  ```html
+  <input type="text" bd-bind:value="username" />
+  ```
+
+  In the script:
+  ```javascript
+  export default function() {
+    const [username, setUsername] = signal('');
+    return { username, setUsername };
+  }
+  ```
+
+---
+
+#### **Conditional Rendering**
+
+- **`bd-if`**  
+  Conditionally renders an element based on a reactive expression.
+
+  ```html
+  <p bd-if="isLoggedIn">Welcome back!</p>
+  <p bd-else>Login to continue.</p>
+  ```
+
+  In the script:
+  ```javascript
+  export default function() {
+    const [isLoggedIn, setIsLoggedIn] = signal(false);
+    return { isLoggedIn };
+  }
+  ```
+
+---
+
+#### **Event Handling**
+
+- **`bd-on:event`**  
+  Attaches an event listener to an element. Similar to Vue's `v-on`.
+
+  ```html
+  <button bd-on:click="increment">Increment</button>
+  ```
+
+  In the script:
+  ```javascript
+  export default function() {
+    const [count, setCount] = signal(0);
+    const increment = () => setCount(count() + 1);
+    return { increment };
+  }
+  ```
+
+---
+
+#### **Visibility Control**
+
+- **`bd-show`**  
+  Toggles the visibility of an element based on a reactive expression.
+
+  ```html
+  <div bd-show="isVisible">This content is visible.</div>
+  ```
+
+  In the script:
+  ```javascript
+  export default function() {
+    const [isVisible, setIsVisible] = signal(true);
+    return { isVisible };
+  }
+  ```
+
+---
+
+#### **List Rendering**
+
+- **`bd-for`**  
+  Loops through an array and renders elements for each item.
+
+  ```html
+  <ul>
+    <li bd-for="item in items">{{ item }}</li>
+  </ul>
+  ```
+
+  In the script:
+  ```javascript
+  export default function() {
+    const [items] = signal(['Item 1', 'Item 2', 'Item 3']);
+    return { items };
+  }
+  ```
+
+---
+
+#### **HTMX-Inspired Attributes**
+
+- **`bd-get`**  
+  Fetches content from a URL and replaces the element's content.
+
+  ```html
+  <button bd-get="/api/data" bd-target="#result">Load Data</button>
+  <div id="result"></div>
+  ```
+
+- **`bd-post`**  
+  Sends data to a URL via POST and updates the target element.
+
+  ```html
+  <form bd-post="/api/submit" bd-target="#response">
+    <input type="text" name="username" />
+    <button type="submit">Submit</button>
+  </form>
+  <div id="response"></div>
+  ```
+
+- **`bd-swap`**  
+  Specifies how the content should be swapped (e.g., `innerHTML`, `outerHTML`, `append`, etc.).
+
+  ```html
+  <button bd-get="/api/data" bd-swap="append">Add Data</button>
+  ```
+
+- **`bd-select`**  
+  Selects specific content from the server response.
+
+  ```html
+  <button bd-get="/api/data" bd-select=".item">Load Items</button>
+  ```
+
+- **`bd-trigger`**  
+  Specifies the event(s) that trigger the request (e.g., `click`, `change`, custom events).
+
+  ```html
+  <button bd-get="/api/data" bd-trigger="mouseenter">Preview Data</button>
+  ```
+
+- **`bd-push-url`**  
+  Pushes a new URL to the browser history when the request completes.
+
+  ```html
+  <button bd-get="/api/page" bd-push-url="true">Go to Page</button>
+  ```
+
+- **`bd-replace-url`**  
+  Replaces the current URL in the browser history when the request completes.
+
+  ```html
+  <button bd-get="/api/page" bd-replace-url="true">Replace Page</button>
+  ```
+
+
+### Example: Counter Component
+
+**`Counter.html`**
+```html
+<div>
+  <p>Count: {{ count }}</p>
+  <button bd-on:click="increment">Increment</button>
+</div>
+
+<script>
+  import { signal } from 'basedom';
+
+  export default function() {
+    const [count, setCount] = signal(0);
+    const increment = () => setCount(count() + 1);
+    return { count, increment };
+  }
+</script>
+```
+
+This DSL provides a clean, declarative way to define components and their behavior, making BaseDOM more accessible and intuitive for developers.
