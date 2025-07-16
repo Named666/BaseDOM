@@ -6,6 +6,7 @@ BaseDOM is a lightweight, modern JavaScript library for building user interfaces
 
 - **Fine-Grained Reactivity:** A `signal`-based system for creating reactive state that automatically and efficiently updates the UI.
 - **Component-Based Architecture:** Build your UI with reusable components that encapsulate their own logic and scoped styles.
+- **Single File Components (SFCs) & DSL:** Define components in `.html` files with a clean, declarative syntax.
 - **Advanced Client-Side Routing:** A powerful router for SPAs, supporting nested routes, layouts, route parameters, and navigation guards.
 - **Declarative Form Handling:** A complete solution for creating forms with validation and submission handling.
 - **Global State Management:** Includes `createStore` for managing complex, structured application state.
@@ -161,35 +162,136 @@ function MyComponent() {
 }
 ```
 
+## Single File Components (SFCs) & DSL
+
+BaseDOM supports defining components in `.html` files using either SFC (Single File Component) or DSL (Domain Specific Language) syntax. This allows you to write your component's template and logic in a single file.
+
+### SFC Syntax
+
+An SFC is an HTML file with a `<template>` and a `<script>` tag.
+
+```html
+<!-- Counter.html -->
+<template>
+  <div>
+    <p>Count: {{ count }}</p>
+    <button bd-on:click="increment">Increment</button>
+  </div>
+</template>
+
+<script>
+  import { signal } from 'basedom';
+
+  export default function() {
+    const [count, setCount] = signal(0);
+    const increment = () => setCount(count() + 1);
+    return { count, increment };
+  }
+</script>
+```
+
+### DSL Syntax
+
+The DSL syntax is more concise, where everything before the `<script>` tag is considered the template.
+
+```html
+<!-- Counter.html -->
+<div>
+  <p>Count: {{ count }}</p>
+  <button bd-on:click="increment">Increment</button>
+</div>
+
+<script>
+  import { signal } from 'basedom';
+
+  export default function() {
+    const [count, setCount] = signal(0);
+    const increment = () => setCount(count() + 1);
+    return { count, increment };
+  }
+</script>
+```
+
+### Using SFCs/DSLs in Routes
+
+You can use these files directly in your route definitions. BaseDOM will automatically fetch, parse, and render them.
+
+```javascript
+import { defineRoute, startApp } from 'basedom';
+
+defineRoute({
+    path: '/',
+    component: '/components/Counter.html' // Path to your component file
+});
+
+startApp('#app');
+```
+
 ## Routing
 
 BaseDOM includes a client-side router supporting nested routes, layouts, and navigation guards.
 
+### `x-outlet`
+The `x-outlet` attribute is used to mark the location where child routes should be rendered. When a nested route is matched, its component will be rendered inside the element with the `x-outlet` attribute.
+
+You can also create named outlets by providing a value to the attribute, e.g., `x-outlet="sidebar"`. This allows you to target specific outlets from your route definitions using the `outlet` property. If no outlet is specified in the route definition, it will default to the main outlet, which is an element with `x-outlet` or `x-outlet="main"`.
+
+### Example
+
+Here is an example of a layout with a main content area and a sidebar, each with its own outlet.
+
+**`layout.html`**
+```html
+<div class="layout">
+    <aside x-outlet="sidebar"></aside>
+    <main x-outlet="main"></main>
+</div>
+```
+
+**`components.js`**
 ```javascript
-import { defineRoute, startApp, Link, createComponent, div, main, nav } from 'basedom';
+import { createComponent, h1, p, ul, li } from 'basedom';
 
-// Layout component with an outlet for child routes
-const AppLayout = (props) => {
-    return div({
-        children: [
-            nav(Link({ href: '/' }, 'Home'), ' | ', Link({ href: '/users/1' }, 'User 1')),
-            // props.children will render the matched child route
-            main({ attrs: { 'x-outlet': true } }, props.children)
-        ]
-    });
-};
-
-// Define routes
-defineRoute({
-    path: '/',
-    component: AppLayout,
+export const MainContent = () => createComponent('div', {
     children: [
-        { path: '/', component: () => h1('Home') }, // Index route
-        { path: '/users/:id', component: (props) => h1(`User: ${props.params.id}`) }
+        h1('Main Content'),
+        p('This is the main content area.')
     ]
 });
 
-// Start the app
+export const Sidebar = () => createComponent('div', {
+    children: [
+        h1('Sidebar'),
+        ul(
+            li('Link 1'),
+            li('Link 2')
+        )
+    ]
+});
+```
+
+**`routes.js`**
+```javascript
+import { defineRoute, startApp } from 'basedom';
+import { MainContent, Sidebar } from './components.js';
+
+defineRoute({
+    path: '/',
+    component: '/layout.html',
+    children: [
+        {
+            path: '/',
+            component: MainContent,
+            outlet: 'main'
+        },
+        {
+            path: '/',
+            component: Sidebar,
+            outlet: 'sidebar'
+        }
+    ]
+});
+
 startApp('#app');
 ```
 
@@ -233,6 +335,7 @@ function MyForm() {
 
 - `createComponent(tag, options)`: The core function for creating elements with reactive features.
 - `renderComponent(component, container)`: Renders a component into a container, handling lifecycle hooks.
+- `parseComponent(htmlText)`: Parses an HTML string into a renderable component function.
 - `html.js` provides helpers for all standard HTML tags (`div`, `p`, `h1`, etc.).
 - `Link(options, children)`: A component for internal navigation that works with the router.
 - `List(getItemsFn, getKeyFn, renderItemFn)`: Efficiently renders a list of items with key-based reconciliation.

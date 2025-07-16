@@ -13,3 +13,4 @@ export * from './state.js';
 export * from './html.js';
 export * from './render.js';
 export * from './router.js';
+export * from './parser.js';

@@ -2,6 +2,7 @@
 import { findMatchingRoute, parseQuery } from './router.js';
 import { renderComponent, createComponent } from './components.js';
 import { signal } from './state.js';
+import { parseComponent } from './parser.js';
 
 let errorBoundary = null;
 export function setErrorBoundary(componentFn) {
@@ -25,6 +26,44 @@ const [currentView, setCurrentView] = signal(null);
 // track the last matched route stack to enable partial updates
 let prevMatchedRoutes = [];
 
+// --- Component Loading and Caching ---
+const componentCache = new Map();
+
+async function resolveComponent(component) {
+    if (typeof component !== 'string') {
+        return component; // It's already a function
+    }
+    // Simple check for file-based components
+    if (!component.endsWith('.html')) {
+        return component;
+    }
+
+    if (componentCache.has(component)) {
+        return componentCache.get(component);
+    }
+
+    try {
+        const response = await fetch(component);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch component: ${component} (${response.status} ${response.statusText})`);
+        }
+        const sfcText = await response.text();
+        const componentFn = await parseComponent(sfcText);
+        componentCache.set(component, componentFn);
+        return componentFn;
+    } catch (error) {
+        console.error(`Error resolving component "${component}":`, error);
+        // Return a component that displays the error
+        return () => createComponent('div', {
+            children: [
+                createComponent('h3', { children: 'Component Load Error' }),
+                createComponent('pre', { children: error.message, style: { color: 'red' } })
+            ]
+        });
+    }
+}
+
+
 export function initialize(rootElementSelector = '#app') {
     const newRootElement = document.querySelector(rootElementSelector);
     if (newRootElement) {
@@ -37,7 +76,7 @@ export function initialize(rootElementSelector = '#app') {
     } else {
         console.warn(`Root element "${rootElementSelector}" not found. App will not render until it is available.`);
         // Retry initialization when the DOM is fully loaded
-        document.addEventListener('DOMContentLoaded', initialize, { once: true });
+        document.addEventListener('DOMContentLoaded', () => initialize(rootElementSelector), { once: true });
     }
 }
 
@@ -103,6 +142,7 @@ export async function renderRoute(pathname) {
                 prevMatchedRoutes.slice(0, -1).every((r, i) => r === newRoutes[i])
             ) {
                 const leaf = newMatched[newMatched.length - 1];
+                const componentFn = await resolveComponent(leaf.route.componentFn);
                 // Use outlet name if provided, fallback to default
                 const outletName = leaf.route.outlet || 'main';
                 const outletSelector = outletName === 'main'
@@ -110,8 +150,8 @@ export async function renderRoute(pathname) {
                     : `[x-outlet="${outletName}"]`;
                 const outlet = document.querySelector(outletSelector);
                 if (outlet) {
-                    await renderComponent(
-                        () => leaf.route.componentFn({ params: routeMatch.params, query: queryParams }),
+                    renderComponent(
+                        () => componentFn({ params: routeMatch.params, query: queryParams }),
                         outlet
                     );
                     prevMatchedRoutes = newRoutes;
@@ -119,25 +159,41 @@ export async function renderRoute(pathname) {
                 }
             }
 
-            // Compose nested layouts, passing outlet name to each
-            elementToRender = matched.reduceRight((childComponentRenderFn, { route, params: routeParams }, idx) => {
-                return () => {
-                    const combinedParams = { ...routeParams, ...params };
-                    const outletName = route.outlet || (idx === matched.length - 1 ? 'main' : undefined);
-                    const props = {
-                        params: combinedParams,
-                        query: queryParams,
-                        children: childComponentRenderFn,
-                        outlet: outletName
+            // Compose nested layouts asynchronously
+            elementToRender = await (async () => {
+                let childComponentRenderFn = null;
+                // Iterate backwards to compose from the inside out
+                for (let i = matched.length - 1; i >= 0; i--) {
+                    const { route, params: routeParams } = matched[i];
+                    
+                    // Resolve the component which might be a URL
+                    const componentFn = await resolveComponent(route.componentFn);
+                    
+                    // Capture the current child for the closure
+                    const currentChildFn = childComponentRenderFn;
+                    
+                    // Create the new parent render function
+                    childComponentRenderFn = () => {
+                        const combinedParams = { ...routeParams, ...params };
+                        const outletName = route.outlet || (i === matched.length - 1 ? 'main' : undefined);
+                        const props = {
+                            params: combinedParams,
+                            query: queryParams,
+                            children: currentChildFn, // The previously created child render function
+                            outlet: outletName
+                        };
+                        try {
+                            // Execute the component function with its props
+                            return componentFn(props);
+                        } catch (err) {
+                            console.error('Component render error:', err);
+                            throw err;
+                        }
                     };
-                    try {
-                        return route.componentFn(props);
-                    } catch (err) {
-                        console.error('Component render error:', err);
-                        throw err;
-                    }
-                };
-            }, null)();
+                }
+                // Execute the final, top-level render function
+                return childComponentRenderFn ? childComponentRenderFn() : null;
+            })();
         } else {
             document.title = '404 Not Found';
             elementToRender = createComponent('h1', { children: '404 Not Found' });
