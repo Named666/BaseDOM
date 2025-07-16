@@ -15,7 +15,8 @@ export async function parseComponent(htmlText) {
         // Dynamically import the component's logic
         const componentModule = await import(`data:text/javascript,${encodeURIComponent(script)}`);
         const componentLogicFn = componentModule.default;
-
+        console.log('Parsed component logic:', componentLogicFn);
+        console.log('Parsed template:', template);
         // Validate that the component logic is a function
         if (typeof componentLogicFn !== 'function') {
             throw new Error('Component script must export a default function');

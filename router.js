@@ -1,7 +1,6 @@
 // router.js
 import { renderRoute } from './render.js';
 import { attachLinkInterception } from './navigation.js';
-import { parseComponent } from './parser.js';
 
 export const routes = [];
 
