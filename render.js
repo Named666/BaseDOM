@@ -204,7 +204,7 @@ export async function renderRoute(pathname) {
             document.title = '404 Not Found';
             elementToRender = createComponent('h1', { children: '404 Not Found' });
         }
-
+        console.log('Final element to render:', elementToRender);
         setCurrentView(elementToRender);
         // track full render
         if (routeMatch) {
