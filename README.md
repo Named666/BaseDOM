@@ -105,12 +105,17 @@ BaseDOM uses `x-` prefixed attributes for reactive behavior:
 - **`x-on:event`** - Event handling (`x-on:click="handler"`)
 - **`x-bind:attr`** - Dynamic attributes (`x-bind:class="className"`)
 
+### Navigation & Routing
+- **`x-link`** - SPA navigation links (automatic interception)
+- **`x-outlet`** - Named route outlets for nested routing
+
 ### HTMX-style Fetch Directives
 - **`x-get` / `x-post`** - HTTP requests
 - **`x-swap`** - Content replacement strategy (`innerHTML`, `outerHTML`, `append`, etc.)
 - **`x-target`** - CSS selector for swap target
 - **`x-trigger`** - Event that triggers request (default: `click`)
 - **`x-select`** - Extract portion of response
+- **`x-push-url`** / **`x-replace-url`** - History management
 
 **Example: Dynamic content loading**
 ```html
@@ -118,6 +123,21 @@ BaseDOM uses `x-` prefixed attributes for reactive behavior:
   Load Data
 </button>
 <div id="content"><!-- content will be loaded here --></div>
+```
+
+**Example: SPA navigation**
+```html
+<a href="/about" x-link>About</a>
+<!-- Or use regular links - they're auto-intercepted -->
+<a href="/contact">Contact</a>
+```
+
+**Example: Named outlets for nested routing**
+```html
+<div>
+  <nav x-outlet="sidebar"></nav>
+  <main x-outlet="main"></main>
+</div>
 ```
 
 ## Reactive State
@@ -161,10 +181,10 @@ import { defineRoute, startRouter, navigate } from './basedom/router.js';
 defineRoute('/', './components/Home.html');
 defineRoute('/users/:id', './components/UserProfile.html');
 
-// Nested routes
+// Nested routes with outlets
 defineRoute({
   path: '/admin',
-  component: './components/AdminLayout.html',
+  component: './components/AdminLayout.html', // Contains <div x-outlet="main"></div>
   children: [
     { path: 'users', component: './components/AdminUsers.html' },
     { path: 'settings', component: './components/AdminSettings.html' }
@@ -175,6 +195,21 @@ startRouter();
 
 // Programmatic navigation
 navigate('/users/123');
+```
+
+**AdminLayout.html example:**
+```html
+<template>
+  <div class="admin-layout">
+    <aside>
+      <a href="/admin/users">Users</a>
+      <a href="/admin/settings">Settings</a>
+    </aside>
+    <main x-outlet="main">
+      <!-- Child routes render here -->
+    </main>
+  </div>
+</template>
 ```
 
 ## Forms & Validation
