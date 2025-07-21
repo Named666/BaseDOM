@@ -6,7 +6,8 @@ A lightweight, reactive JavaScript framework for building modern web application
 
 - 🔄 **Signal-based Reactivity** - Fine-grained updates with automatic dependency tracking
 - 🧩 **Single-File Components** - HTML, CSS, and JS in one file with `x-` directives
-- 🌐 **HTMX-like Fetch Directives** - Dynamic content loading without JavaScript
+- � **Scoped Styles** - Automatic CSS scoping prevents style conflicts between components
+- �🌐 **HTMX-like Fetch Directives** - Dynamic content loading without JavaScript
 - 📱 **SPA Routing** - Nested routes, guards, and lazy loading
 - 📝 **Form Handling** - Built-in validation and state management
 - 🚀 **Zero Build Setup** - Works directly in the browser with ES modules
@@ -91,6 +92,38 @@ npx serve .
 ```
 
 Visit `http://localhost:8000` to see your app!
+
+## Scoped Styles
+
+BaseDOM automatically scopes CSS within single-file components, preventing style conflicts:
+
+```html
+<!-- ButtonComponent.html -->
+<template>
+  <button class="primary">Click me</button>
+</template>
+
+<style>
+.primary {
+  background: blue;
+  color: white;
+  padding: 10px 20px;
+}
+
+/* Use & to style the component root */
+& {
+  display: inline-block;
+  margin: 5px;
+}
+
+/* Nested selectors work too */
+.primary:hover {
+  background: darkblue;
+}
+</style>
+```
+
+Styles are automatically prefixed with unique class names, so `.primary` becomes something like `.x-abc123 .primary`, ensuring no conflicts with other components.
 
 ## Core Directives
 

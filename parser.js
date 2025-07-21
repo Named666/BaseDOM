@@ -11,12 +11,13 @@ import { signal, effect, computed } from './state.js';
  */
 export async function parseComponent(htmlText) {
     try {
-        const { template, script } = extractParts(htmlText);
+        const { template, script, styles } = extractParts(htmlText);
         // Dynamically import the component's logic
         const componentModule = await import(`data:text/javascript,${encodeURIComponent(script)}`);
         const componentLogicFn = componentModule.default;
         console.log('Parsed component logic:', componentLogicFn);
         console.log('Parsed template:', template);
+        console.log('Parsed styles:', styles);
         // Validate that the component logic is a function
         if (typeof componentLogicFn !== 'function') {
             throw new Error('Component script must export a default function');
@@ -49,15 +50,23 @@ export async function parseComponent(htmlText) {
             const context = componentLogicFn(props || {});
             
             if (nodes.length === 1) {
-                // Single root node
-                return parseNode(nodes[0], context);
+                // Single root node - apply styles to it
+                return parseNode(nodes[0], context, styles);
             } else if (nodes.length > 1) {
-                // Multiple root nodes - wrap in a fragment
+                // Multiple root nodes - wrap in a fragment with styles applied to wrapper
                 const children = nodes.map(n => parseNode(n, context)).filter(Boolean);
-                return Element('div')({ children });
+                const wrapperOptions = { children };
+                if (styles) {
+                    wrapperOptions.styles = styles;
+                }
+                return Element('div')(wrapperOptions);
             } else {
                 // No nodes found
-                return Element('div')({ children: 'No content' });
+                const noContentOptions = { children: 'No content' };
+                if (styles) {
+                    noContentOptions.styles = styles;
+                }
+                return Element('div')(noContentOptions);
             }
         };
     } catch (error) {
@@ -74,41 +83,55 @@ export async function parseComponent(htmlText) {
 }
 
 /**
- * Extracts the <template> and <script> parts from the component file.
+ * Extracts the <template>, <script>, and <style> parts from the component file.
  * @param {string} htmlText - The raw text of the .html file.
- * @returns {{template: string, script: string}}
+ * @returns {{template: string, script: string, styles: string}}
  */
 function extractParts(htmlText) {
     // Normalize line endings
     htmlText = htmlText.replace(/\r\n?/g, '\n');
-    // Find <template> and <script> tags (case-insensitive)
+    // Find <template>, <script>, and <style> tags (case-insensitive)
     const templateMatch = htmlText.match(/<template>([\s\S]*?)<\/template>/i);
     const scriptMatch = htmlText.match(/<script>([\s\S]*?)<\/script>/i);
+    const styleMatch = htmlText.match(/<style>([\s\S]*?)<\/style>/i);
 
     let template = '';
     let script = '';
+    let styles = '';
 
     if (templateMatch) {
-        // SFC style: <template>...</template><script>...</script>
+        // SFC style: <template>...</template><script>...</script><style>...</style>
         template = templateMatch[1].trim();
         if (scriptMatch) {
             script = scriptMatch[1].trim();
+        }
+        if (styleMatch) {
+            styles = styleMatch[1].trim();
         }
     } else if (scriptMatch) {
         // DSL style: everything before <script> is template
         const scriptStart = scriptMatch.index;
         template = htmlText.slice(0, scriptStart).trim();
         script = scriptMatch[1].trim();
+        // Still check for styles in DSL mode
+        if (styleMatch) {
+            styles = styleMatch[1].trim();
+        }
     } else {
-        // No script tag, treat all as template
+        // No script tag, treat all as template (but still check for styles)
         template = htmlText.trim();
         script = 'export default function(props) { return {}; }';
+        if (styleMatch) {
+            styles = styleMatch[1].trim();
+            // Remove the <style> block from template since we extracted it
+            template = template.replace(/<style>[\s\S]*?<\/style>/i, '').trim();
+        }
     }
 
     // If template is empty, fallback
     if (!template) template = '<div>Template not found</div>';
 
-    return { template, script };
+    return { template, script, styles };
 }
 
 // --- Node Parsing and Directive Handling ---
@@ -324,7 +347,7 @@ registerDirective('default', (node, context, props) => {
 
 // --- Unified Node Parsing ---
 
-function parseNode(node, context) {
+function parseNode(node, context, componentStyles = null) {
     if (node.nodeType === Node.TEXT_NODE) {
         return parseTextNode(node.textContent, context);
     }
@@ -347,6 +370,11 @@ function parseNode(node, context) {
     const props = { attrs: {} };
     const children = [];
     const fetchConfig = {};
+
+    // Add component styles to the root element if this is the first element being parsed
+    if (componentStyles) {
+        props.styles = componentStyles;
+    }
 
     // Attribute/event/fetch directives
     for (const [name, handler] of directiveRegistry.entries()) {
