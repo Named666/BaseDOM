@@ -28,17 +28,17 @@ export async function parseComponent(htmlText) {
         // Support multiple root nodes (fragment) for DSL style
         let nodes = Array.from(doc.body.childNodes).filter(n => n.nodeType === Node.ELEMENT_NODE || n.nodeType === Node.TEXT_NODE);
         
-        // Filter out bd-else nodes that are paired with bd-if nodes
+        // Filter out x-else nodes that are paired with x-if nodes
         nodes = nodes.filter((node, index) => {
-            if (node.nodeType === Node.ELEMENT_NODE && node.hasAttribute && node.hasAttribute('bd-else')) {
-                // Look for a previous bd-if sibling (skipping text nodes)
+            if (node.nodeType === Node.ELEMENT_NODE && node.hasAttribute && node.hasAttribute('x-else')) {
+                // Look for a previous x-if sibling (skipping text nodes)
                 for (let i = index - 1; i >= 0; i--) {
                     const prevNode = nodes[i];
-                    if (prevNode.nodeType === Node.ELEMENT_NODE && prevNode.hasAttribute && prevNode.hasAttribute('bd-if')) {
-                        return false; // Skip this bd-else, it's paired with bd-if
+                    if (prevNode.nodeType === Node.ELEMENT_NODE && prevNode.hasAttribute && prevNode.hasAttribute('x-if')) {
+                        return false; // Skip this x-else, it's paired with x-if
                     }
                     if (prevNode.nodeType === Node.ELEMENT_NODE) {
-                        break; // Found a non-bd-if element, stop looking
+                        break; // Found a non-x-if element, stop looking
                     }
                 }
             }
@@ -116,15 +116,15 @@ function extractParts(htmlText) {
 
 // --- Special fetch/trigger directive attributes ---
 const FETCH_TRIGGER_ATTRS = [
-    'bd-get', 'bd-post', 'bd-swap', 'bd-select', 'bd-trigger', 'bd-push-url', 'bd-replace-url', 'bd-target'
+    'x-get', 'x-post', 'x-swap', 'x-select', 'x-trigger', 'x-push-url', 'x-replace-url', 'x-target'
 ];
 
 
 // --- Directive Handlers Registry ---
 const directiveHandlers = {
     // Control flow
-    'bd-if': (node, context) => {
-        const ifDirective = node.getAttribute('bd-if');
+    'x-if': (node, context) => {
+        const ifDirective = node.getAttribute('x-if');
         if (ifDirective) {
             let elseNode = null;
             let nextSibling = node.nextElementSibling;
@@ -134,7 +134,7 @@ const directiveHandlers = {
                 nextSibling = nextSibling.nextElementSibling;
             }
             
-            if (nextSibling && nextSibling.hasAttribute('bd-else')) {
+            if (nextSibling && nextSibling.hasAttribute('x-else')) {
                 elseNode = nextSibling;
             }
             
@@ -142,16 +142,16 @@ const directiveHandlers = {
         }
         return null;
     },
-    'bd-for': (node, context) => {
-        const forDirective = node.getAttribute('bd-for');
+    'x-for': (node, context) => {
+        const forDirective = node.getAttribute('x-for');
         if (forDirective) return handleForDirective(node, forDirective, context);
         return null;
     },
     // Attribute/event directives
-    'bd-on': (node, context, props) => {
+    'x-on': (node, context, props) => {
         for (const attr of node.attributes) {
-            if (attr.name.startsWith('bd-on:')) {
-                const eventName = attr.name.substring(6);
+            if (attr.name.startsWith('x-on:')) {
+                const eventName = attr.name.substring(5);
                 const handlerName = attr.value;
                 const handler = context[handlerName];
                 if (handler && typeof handler === 'function') {
@@ -160,10 +160,10 @@ const directiveHandlers = {
             }
         }
     },
-    'bd-bind': (node, context, props) => {
+    'x-bind': (node, context, props) => {
         for (const attr of node.attributes) {
-            if (attr.name.startsWith('bd-bind:')) {
-                const propName = attr.name.substring(8);
+            if (attr.name.startsWith('x-bind:')) {
+                const propName = attr.name.substring(7);
                 const expr = attr.value;
                 const contextValue = context[expr];
                 // Always wrap in a computed signal for consistent reactivity
@@ -176,9 +176,9 @@ const directiveHandlers = {
             }
         }
     },
-    'bd-show': (node, context, props) => {
+    'x-show': (node, context, props) => {
         for (const attr of node.attributes) {
-            if (attr.name === 'bd-show') {
+            if (attr.name === 'x-show') {
                 const showExpr = attr.value;
                 const contextValue = context[showExpr];
                 if (!props.style) props.style = {};
@@ -195,7 +195,7 @@ const directiveHandlers = {
             }
         }
     },
-    'bd-trigger': (node, context, props, fetchConfig) => {
+    'x-trigger': (node, context, props, fetchConfig) => {
         for (const attr of node.attributes) {
             if (FETCH_TRIGGER_ATTRS.includes(attr.name)) {
                 props.attrs[attr.name] = attr.value;
@@ -205,7 +205,7 @@ const directiveHandlers = {
     },
     'default': (node, context, props) => {
         for (const attr of node.attributes) {
-            if (!attr.name.startsWith('bd-on:') && !attr.name.startsWith('bd-bind:') && attr.name !== 'bd-show' && !FETCH_TRIGGER_ATTRS.includes(attr.name)) {
+            if (!attr.name.startsWith('x-on:') && !attr.name.startsWith('x-bind:') && attr.name !== 'x-show' && !FETCH_TRIGGER_ATTRS.includes(attr.name)) {
                 props.attrs[attr.name] = attr.value;
             }
         }
@@ -222,19 +222,19 @@ export function registerDirective(name, handler) {
 }
 
 // Built-in directives registration
-registerDirective('bd-if', (node, context, props, fetchConfig) => {
-    const ifDirective = node.getAttribute('bd-if');
+registerDirective('x-if', (node, context, props, fetchConfig) => {
+    const ifDirective = node.getAttribute('x-if');
     if (ifDirective) {
         let elseNode = null;
         
-        // Find the corresponding bd-else node by traversing siblings
+        // Find the corresponding x-else node by traversing siblings
         let sibling = node.nextSibling;
         while (sibling) {
-            if (sibling.nodeType === Node.ELEMENT_NODE && sibling.hasAttribute('bd-else')) {
+            if (sibling.nodeType === Node.ELEMENT_NODE && sibling.hasAttribute('x-else')) {
                 elseNode = sibling;
                 break;
             } else if (sibling.nodeType === Node.ELEMENT_NODE) {
-                // Found another element that's not bd-else, stop looking
+                // Found another element that's not x-else, stop looking
                 break;
             }
             sibling = sibling.nextSibling;
@@ -245,16 +245,16 @@ registerDirective('bd-if', (node, context, props, fetchConfig) => {
     return null;
 });
 
-registerDirective('bd-for', (node, context, props, fetchConfig) => {
-    const forDirective = node.getAttribute('bd-for');
+registerDirective('x-for', (node, context, props, fetchConfig) => {
+    const forDirective = node.getAttribute('x-for');
     if (forDirective) return handleForDirective(node, forDirective, context);
     return null;
 });
 
-registerDirective('bd-on', (node, context, props) => {
+registerDirective('x-on', (node, context, props) => {
     for (const attr of node.attributes) {
-        if (attr.name.startsWith('bd-on:')) {
-            const eventName = attr.name.substring(6);
+        if (attr.name.startsWith('x-on:')) {
+            const eventName = attr.name.substring(5);
             const handlerName = attr.value;
             const handler = context[handlerName];
             if (handler && typeof handler === 'function') {
@@ -264,10 +264,10 @@ registerDirective('bd-on', (node, context, props) => {
     }
 });
 
-registerDirective('bd-bind', (node, context, props) => {
+registerDirective('x-bind', (node, context, props) => {
     for (const attr of node.attributes) {
-        if (attr.name.startsWith('bd-bind:')) {
-            const propName = attr.name.substring(8);
+        if (attr.name.startsWith('x-bind:')) {
+            const propName = attr.name.substring(7);
             const expr = attr.value;
             const contextValue = context[expr];
             props[propName] = computed(() => {
@@ -280,9 +280,9 @@ registerDirective('bd-bind', (node, context, props) => {
     }
 });
 
-registerDirective('bd-show', (node, context, props) => {
+registerDirective('x-show', (node, context, props) => {
     for (const attr of node.attributes) {
-        if (attr.name === 'bd-show') {
+        if (attr.name === 'x-show') {
             const showExpr = attr.value;
             const contextValue = context[showExpr];
             if (!props.style) props.style = {};
@@ -299,7 +299,7 @@ registerDirective('bd-show', (node, context, props) => {
     }
 });
 
-registerDirective('bd-trigger', (node, context, props, fetchConfig) => {
+registerDirective('x-trigger', (node, context, props, fetchConfig) => {
     for (const attr of node.attributes) {
         if (FETCH_TRIGGER_ATTRS.includes(attr.name)) {
             props.attrs[attr.name] = attr.value;
@@ -312,9 +312,9 @@ registerDirective('bd-trigger', (node, context, props, fetchConfig) => {
 registerDirective('default', (node, context, props) => {
     for (const attr of node.attributes) {
         if (
-            !attr.name.startsWith('bd-on:') &&
-            !attr.name.startsWith('bd-bind:') &&
-            attr.name !== 'bd-show' &&
+            !attr.name.startsWith('x-on:') &&
+            !attr.name.startsWith('x-bind:') &&
+            attr.name !== 'x-show' &&
             !FETCH_TRIGGER_ATTRS.includes(attr.name)
         ) {
             props.attrs[attr.name] = attr.value;
@@ -330,13 +330,13 @@ function parseNode(node, context) {
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return null;
     
-    // Skip bd-else nodes - they should only be processed by their bd-if
-    if (node.hasAttribute && node.hasAttribute('bd-else')) {
+    // Skip x-else nodes - they should only be processed by their x-if
+    if (node.hasAttribute && node.hasAttribute('x-else')) {
         return null;
     }
 
     // Control flow directives (return early if handled)
-    for (const key of ['bd-if', 'bd-for']) {
+    for (const key of ['x-if', 'x-for']) {
         if (node.hasAttribute(key) && directiveRegistry.has(key)) {
             const result = directiveRegistry.get(key)(node, context, {}, {});
             if (result !== null) return result;
@@ -350,34 +350,34 @@ function parseNode(node, context) {
 
     // Attribute/event/fetch directives
     for (const [name, handler] of directiveRegistry.entries()) {
-        if (name === 'bd-if' || name === 'bd-for' || name === 'default') continue;
+        if (name === 'x-if' || name === 'x-for' || name === 'default') continue;
         handler(node, context, props, fetchConfig);
     }
     directiveRegistry.get('default')(node, context, props);
 
-    // Process child nodes, skipping bd-else that are paired with bd-if
+    // Process child nodes, skipping x-else that are paired with x-if
     for (let i = 0; i < node.childNodes.length; i++) {
         const child = node.childNodes[i];
         
-        // Skip bd-else nodes that are paired with bd-if
+        // Skip x-else nodes that are paired with x-if
         if (
             child.nodeType === Node.ELEMENT_NODE &&
             child.hasAttribute &&
-            child.hasAttribute('bd-else')
+            child.hasAttribute('x-else')
         ) {
-            // Look backwards for a bd-if sibling
+            // Look backwards for a x-if sibling
             let foundPairedIf = false;
             for (let j = i - 1; j >= 0; j--) {
                 const prevSibling = node.childNodes[j];
                 if (prevSibling.nodeType === Node.ELEMENT_NODE) {
-                    if (prevSibling.hasAttribute && prevSibling.hasAttribute('bd-if')) {
+                    if (prevSibling.hasAttribute && prevSibling.hasAttribute('x-if')) {
                         foundPairedIf = true;
                     }
                     break; // Stop at first element node
                 }
             }
             if (foundPairedIf) {
-                continue; // Skip this bd-else
+                continue; // Skip this x-else
             }
         }
         
@@ -386,11 +386,11 @@ function parseNode(node, context) {
     }
 
     function handleFetchTriggerBehavior(el) {
-        const method = fetchConfig['bd-post'] ? 'POST' : 'GET';
-        const url = fetchConfig['bd-get'] || fetchConfig['bd-post'];
+        const method = fetchConfig['x-post'] ? 'POST' : 'GET';
+        const url = fetchConfig['x-get'] || fetchConfig['x-post'];
         if (!url) return;
         
-        let trigger = fetchConfig['bd-trigger'] || '';
+        let trigger = fetchConfig['x-trigger'] || '';
         if (!trigger) {
             trigger = (tagName === 'form' && method === 'POST') ? 'submit' : 'click';
         }
@@ -414,12 +414,12 @@ function parseNode(node, context) {
                 let html = await resp.text();
                 
                 // Handle content selection
-                if (fetchConfig['bd-select']) {
+                if (fetchConfig['x-select']) {
                     const temp = document.createElement('div');
                     temp.innerHTML = html;
-                    const sel = temp.querySelector(fetchConfig['bd-select']);
+                    const sel = temp.querySelector(fetchConfig['x-select']);
                     if (sel) {
-                        const swapMode = (fetchConfig['bd-swap'] || '').toLowerCase();
+                        const swapMode = (fetchConfig['x-swap'] || '').toLowerCase();
                         if (swapMode === 'innerhtml') {
                             html = sel.innerHTML;
                         } else {
@@ -430,13 +430,13 @@ function parseNode(node, context) {
                 
                 // Determine target element
                 let target = el;
-                if (fetchConfig['bd-target']) {
-                    const targetEl = document.querySelector(fetchConfig['bd-target']);
+                if (fetchConfig['x-target']) {
+                    const targetEl = document.querySelector(fetchConfig['x-target']);
                     if (targetEl) target = targetEl;
                 }
                 
                 // Apply the swap strategy
-                const swap = (fetchConfig['bd-swap'] || 'innerHTML').toLowerCase();
+                const swap = (fetchConfig['x-swap'] || 'innerHTML').toLowerCase();
                 if (swap === 'outerhtml') {
                     target.outerHTML = html;
                 } else if (swap === 'append' || swap === 'beforeend') {
@@ -452,9 +452,9 @@ function parseNode(node, context) {
                 }
                 
                 // Handle URL updates
-                if (fetchConfig['bd-push-url'] === 'true') {
+                if (fetchConfig['x-push-url'] === 'true') {
                     history.pushState({}, '', url);
-                } else if (fetchConfig['bd-replace-url'] === 'true') {
+                } else if (fetchConfig['x-replace-url'] === 'true') {
                     history.replaceState({}, '', url);
                 }
             } catch (error) {
@@ -482,16 +482,16 @@ function parseNode(node, context) {
 }
 
 /**
- * Handles the `bd-if` and `bd-else` directives for conditional rendering.
- * @param {Node} ifNode - The node with the bd-if attribute.
+ * Handles the `x-if` and `x-else` directives for conditional rendering.
+ * @param {Node} ifNode - The node with the x-if attribute.
  * @param {string} condition - The condition to evaluate from the context.
- * @param {Node|null} elseNode - The node with the bd-else attribute (if present).
+ * @param {Node|null} elseNode - The node with the x-else attribute (if present).
  * @param {object} context - The component's context.
  * @returns {Function} A function that returns the if or else component or null.
  */
 function handleIfElseDirective(ifNode, condition, elseNode, context) {
-    ifNode.removeAttribute('bd-if');
-    if (elseNode) elseNode.removeAttribute('bd-else');
+    ifNode.removeAttribute('x-if');
+    if (elseNode) elseNode.removeAttribute('x-else');
 
     return computed(() => {
         const conditionValue = context[condition];
@@ -553,14 +553,14 @@ function parseTextNode(text, context) {
 
 
 /**
- * Handles the `bd-for` directive for list rendering.
- * @param {Node} node - The node with the bd-for attribute.
+ * Handles the `x-for` directive for list rendering.
+ * @param {Node} node - The node with the x-for attribute.
  * @param {string} expression - The "item in items" expression.
  * @param {object} context - The component's context.
  * @returns {Function} A function that returns an array of components.
  */
 function handleForDirective(node, expression, context) {
-    node.removeAttribute('bd-for'); // Avoid reprocessing
+    node.removeAttribute('x-for'); // Avoid reprocessing
     const [itemName, listName] = expression.split(' in ').map(s => s.trim());
     
     // Return a function that reactively returns the list of components
