@@ -1,332 +1,290 @@
 # BaseDOM
 
-A lightweight, reactive JavaScript framework for building modern web applications without the complexity. Features signal-based reactivity, component architecture, and powerful directives - all with zero build setup required.
+BaseDOM is A lightweight, reactive JavaScript framework for building dynamic web applications without the complexity. Features signal-based reactivity, component architecture, and powerful directives - all with zero build setup required.
+
+**No build step required.** BaseDOM works directly in the browser using native ES modules, making it incredibly fast to get started.
+
+## Philosophy
+
+The core philosophy of BaseDOM is to provide a developer experience that is:
+
+-   **HTML-Centric:** Build components using familiar HTML syntax, enhanced with powerful template directives. The Single-File Component (SFC) approach is the heart of the framework.
+-   **Declarative & Reactive:** Describe your UI as a function of your state. The fine-grained reactivity system, powered by signals, automatically and efficiently updates the DOM when your state changes.
+-   **Component-Based:** Structure your application into reusable, self-contained components, each with its own logic, template, and scoped styles.
+-   **Progressively Adoptable:** Start small and scale up. Use it to sprinkle reactivity onto existing pages or build a full-fledged Single Page Application (SPA) with its built-in router and global state management.
 
 ## Key Features
 
 - 🔄 **Signal-based Reactivity** - Fine-grained updates with automatic dependency tracking
 - 🧩 **Single-File Components** - HTML, CSS, and JS in one file with `x-` directives
-- � **Scoped Styles** - Automatic CSS scoping prevents style conflicts between components
-- �🌐 **HTMX-like Fetch Directives** - Dynamic content loading without JavaScript
+- 🌐 **HTMX-like Fetch Directives** - Dynamic content loading without JavaScript
 - 📱 **SPA Routing** - Nested routes, guards, and lazy loading
 - 📝 **Form Handling** - Built-in validation and state management
 - 🚀 **Zero Build Setup** - Works directly in the browser with ES modules
 
-## Quick Start
+---
 
-### 1. Basic Setup
+## Getting Started
 
-Create your project structure:
-```
-my-app/
-├── index.html
-├── app.js
-├── components/
-│   └── Counter.html
-└── basedom/ (framework files)
-```
+1.  **Download or Clone:** Get the `basedom` directory into your project.
+2.  **Create `index.html`:** This is your application's entry point.
 
-### 2. HTML Entry Point (`index.html`)
+    ```html
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <title>BaseDOM App</title>
+    </head>
+    <body>
+      <!-- Your app will be rendered here -->
+      <div id="app"></div>
+      <!-- Import your main app script -->
+      <script type="module" src="app.js"></script>
+    </body>
+    </html>
+    ```
+
+3.  **Create your first component (`components/HelloWorld.html`):**
+
+    ```html
+    <template>
+      <div class="greeting">
+        <h1>{{ message }}</h1>
+        <input x-bind:value="message" x-on:input="updateMessage">
+      </div>
+    </template>
+
+    <script>
+    import { signal } from '../basedom/state.js';
+
+    export default function(props) {
+      const [message, setMessage] = signal('Hello, BaseDOM!');
+
+      return {
+        message,
+        updateMessage: (e) => setMessage(e.target.value)
+      };
+    }
+    </script>
+
+    <style>
+    .greeting {
+      padding: 2rem;
+      border: 1px solid #eee;
+      border-radius: 8px;
+      text-align: center;
+    }
+    input {
+      margin-top: 1rem;
+      padding: 0.5rem;
+    }
+    </style>
+    ```
+
+4.  **Create `app.js` to initialize the router:**
+
+    ```javascript
+    import { initialize } from './basedom/render.js';
+    import { defineRoute, startRouter } from './basedom/router.js';
+
+    // Define a route that points to your component file
+    defineRoute({
+      path: '/',
+      component: './components/HelloWorld.html'
+    });
+
+    // Initialize the app in the '#app' element and start the router
+    startApp('#app');
+    ```
+
+5.  **Serve your project:** Use any simple web server.
+
+    ```bash
+    # If you have Python installed
+    python -m http.server
+
+    # Or with Node.js
+    npx serve .
+    ```
+
+---
+
+## Core Concepts
+
+### Single-File Components (SFCs)
+
+Components are `.html` files composed of three optional sections:
+
+-   `<template>`: The HTML structure of your component.
+-   `<script>`: The component's logic, written in JavaScript. It must have a `default export` that is a function. This function's return value (an object) exposes data and methods to the template.
+-   `<style>`: The component's CSS. These styles are **automatically scoped** to the component, meaning they won't leak out and affect other elements.
+
+### Reactivity (`state.js`)
+
+BaseDOM's reactivity is powered by signals.
+
+-   `signal(initialValue)`: Creates a reactive state container. It returns a tuple: `[getter, setter]`. Call the getter `mySignal()` to get the value, and the setter `setMySignal(newValue)` to update it.
+-   `computed(fn)`: Creates a read-only signal whose value is derived from other signals. It re-evaluates automatically when its dependencies change.
+-   `effect(fn)`: Runs a function and automatically re-runs it whenever a signal it depends on changes. Useful for side effects like logging or fetching data.
+
+### Template Syntax (Directives)
+
+Directives are special `x-` attributes in your template that provide dynamic functionality.
+
+| Directive                 | Description                                                                                             | Example                                                 |
+| ------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `{{ expression }}`        | Renders the value of `expression` from the script block as text.                                        | `<p>{{ user.name }}</p>`                                |
+| `x-if="condition"`        | Conditionally renders an element. Must be paired with a truthy/falsy value from the script.             | `<div x-if="isLoggedIn">Welcome back!</div>`             |
+| `x-else`                  | Renders if the preceding `x-if` was false.                                                              | `<div x-else>Please log in.</div>`                       |
+| `x-for="item in items"`   | Renders an element for each item in an array. `item` and `itemIndex` are available in the loop.         | `<li x-for="todo in todos">{{ todo.text }}</li>`         |
+| `x-on:event="handler"`    | Attaches an event listener. `x-on:click`, `x-on:submit`, etc.                                           | `<button x-on:click="increment">+</button>`              |
+| `x-bind:attribute="expr"` | Binds an element attribute to a dynamic value.                                                          | `<a x-bind:href="user.profileUrl">Profile</a>`           |
+| `x-show="condition"`      | Toggles the element's `display` style instead of adding/removing it.                                    | `<div x-show="isVisible">...</div>`                      |
+
+### Scoped Styling
+
+Styles inside a `<style>` tag are automatically scoped. You can also target the component's root element itself using the `&` symbol.
+
 ```html
-<!DOCTYPE html>
-<html>
-<head>
-  <title>BaseDOM App</title>
-</head>
-<body>
-  <div id="app"></div>
-  <script type="module" src="app.js"></script>
-</body>
-</html>
-```
-
-### 3. Component Example (`components/Counter.html`)
-```html
-<template>
-  <div>
-    <h2>Count: {{ count }}</h2>
-    <button x-on:click="increment">+</button>
-    <button x-on:click="decrement">-</button>
-  </div>
-</template>
-
-<script>
-import { signal } from '../basedom/state.js';
-
-export default function(props) {
-  const [count, setCount] = signal(0);
-  
-  return {
-    count,
-    increment: () => setCount(c => c + 1),
-    decrement: () => setCount(c => c - 1)
-  };
-}
-</script>
-
 <style>
-div { padding: 1rem; border: 1px solid #ccc; }
-button { margin: 0.5rem; }
+  /* This only applies to p tags inside this component */
+  p {
+    color: blue;
+  }
+
+  /* This styles the component's root element when it has the .active class */
+  &.active {
+    border: 1px solid blue;
+  }
 </style>
 ```
 
-### 4. App Initialization (`app.js`)
-```javascript
-import { startApp, defineRoute } from './basedom/index.js';
+---
 
-defineRoute({
-  path: '/',
-  component: './components/Counter.html'
-});
+## API & Features
 
-startApp('#app');
-```
+### Routing (`router.js`)
 
-### 5. Run with Local Server
-```bash
-# Using Python
-python -m http.server 8000
+BaseDOM includes a file-based router with support for nesting, layouts, and navigation guards.
 
-# Using Node.js
-npx serve .
-```
+-   `defineRoute(config)`: Defines a route and its component.
+-   `startRouter()`: Initializes the router and listens for URL changes.
+-   `navigate(path)`: Programmatically navigates to a new path.
 
-Visit `http://localhost:8000` to see your app!
+**Layouts and Nested Routes:**
 
-## Scoped Styles
+A layout is a parent component that contains an `<div x-outlet="main"></div>`. Child routes are rendered inside this outlet.
 
-BaseDOM automatically scopes CSS within single-file components, preventing style conflicts:
-
-```html
-<!-- ButtonComponent.html -->
-<template>
-  <button class="primary">Click me</button>
-</template>
-
-<style>
-.primary {
-  background: blue;
-  color: white;
-  padding: 10px 20px;
-}
-
-/* Use & to style the component root */
-& {
-  display: inline-block;
-  margin: 5px;
-}
-
-/* Nested selectors work too */
-.primary:hover {
-  background: darkblue;
-}
-</style>
-```
-
-Styles are automatically prefixed with unique class names, so `.primary` becomes something like `.x-abc123 .primary`, ensuring no conflicts with other components.
-
-## Core Directives
-
-BaseDOM uses `x-` prefixed attributes for reactive behavior:
-
-### Control Flow
-- **`x-if` / `x-else`** - Conditional rendering
-- **`x-for`** - List rendering (`x-for="item in items"`)
-- **`x-show`** - Toggle visibility without removing from DOM
-
-### Events & Binding  
-- **`x-on:event`** - Event handling (`x-on:click="handler"`)
-- **`x-bind:attr`** - Dynamic attributes (`x-bind:class="className"`)
-
-### Navigation & Routing
-- **`x-link`** - SPA navigation links (automatic interception)
-- **`x-outlet`** - Named route outlets for nested routing
-
-### HTMX-style Fetch Directives
-- **`x-get` / `x-post`** - HTTP requests
-- **`x-swap`** - Content replacement strategy (`innerHTML`, `outerHTML`, `append`, etc.)
-- **`x-target`** - CSS selector for swap target
-- **`x-trigger`** - Event that triggers request (default: `click`)
-- **`x-select`** - Extract portion of response
-- **`x-push-url`** / **`x-replace-url`** - History management
-
-**Example: Dynamic content loading**
-```html
-<button x-get="/api/data" x-target="#content" x-swap="innerHTML">
-  Load Data
-</button>
-<div id="content"><!-- content will be loaded here --></div>
-```
-
-**Example: SPA navigation**
-```html
-<a href="/about" x-link>About</a>
-<!-- Or use regular links - they're auto-intercepted -->
-<a href="/contact">Contact</a>
-```
-
-**Example: Named outlets for nested routing**
-```html
-<div>
-  <nav x-outlet="sidebar"></nav>
-  <main x-outlet="main"></main>
-</div>
-```
-
-## Reactive State
-
-### Signals
-```javascript
-import { signal, computed, effect } from './basedom/state.js';
-
-// Basic signal
-const [count, setCount] = signal(0);
-setCount(5); // Set value
-console.log(count()); // Get value
-
-// Computed signals (derived state)
-const doubled = computed(() => count() * 2);
-
-// Effects (side effects)
-effect(() => console.log('Count is:', count()));
-```
-
-### Global Store
-```javascript
-import { createStore } from './basedom/state.js';
-
-const store = createStore({
-  user: { name: 'John', email: 'john@example.com' },
-  settings: { theme: 'dark' }
-});
-
-// Read/write reactive data
-const userName = store.get('user.name');
-store.set('user.name', 'Jane');
-```
-
-## Routing
-
-```javascript
-import { defineRoute, startRouter, navigate } from './basedom/router.js';
-
-// Define routes
-defineRoute('/', './components/Home.html');
-defineRoute('/users/:id', './components/UserProfile.html');
-
-// Nested routes with outlets
-defineRoute({
-  path: '/admin',
-  component: './components/AdminLayout.html', // Contains <div x-outlet="main"></div>
-  children: [
-    { path: 'users', component: './components/AdminUsers.html' },
-    { path: 'settings', component: './components/AdminSettings.html' }
-  ]
-});
-
-startRouter();
-
-// Programmatic navigation
-navigate('/users/123');
-```
-
-**AdminLayout.html example:**
+**`layouts/AdminLayout.html`**
 ```html
 <template>
-  <div class="admin-layout">
+  <div class="admin-area">
     <aside>
-      <a href="/admin/users">Users</a>
-      <a href="/admin/settings">Settings</a>
+      <a href="/admin/dashboard" x-link>Dashboard</a>
+      <a href="/admin/settings" x-link>Settings</a>
     </aside>
     <main x-outlet="main">
-      <!-- Child routes render here -->
+      <!-- Admin child routes render here -->
     </main>
   </div>
 </template>
 ```
 
-## Forms & Validation
-
+**`router.js`**
 ```javascript
-import { createForm, Form, Field, Submit } from './basedom/form.js';
-import { required, email, minLength } from './basedom/validation.js';
-
-const loginForm = createForm({
-  initialValues: { email: '', password: '' },
-  validators: {
-    email: [required(), email()],
-    password: [required(), minLength(8)]
-  },
-  onSubmit: (values) => {
-    console.log('Submitted:', values);
-  }
-});
-
-// In your component template
-const LoginComponent = () => Form({
-  onSubmit: loginForm.handleSubmit,
+defineRoute({
+  path: '/admin',
+  component: './layouts/AdminLayout.html',
   children: [
-    Field({
-      label: 'Email',
-      name: 'email',
-      type: 'email',
-      value: loginForm.fields.email,
-      error: loginForm.errors().email
-    }),
-    Field({
-      label: 'Password', 
-      name: 'password',
-      type: 'password',
-      value: loginForm.fields.password,
-      error: loginForm.errors().password
-    }),
-    Submit('Login', { isSubmitting: loginForm.isSubmitting() })
+    { path: '/dashboard', component: './pages/AdminDashboard.html' },
+    { path: '/settings', component: './pages/AdminSettings.html' }
   ]
 });
 ```
 
-## Advanced Features
+### Global State (`createStore`)
 
-### Component Lifecycle
+For complex state shared between many components, `createStore` provides a robust global store.
+
+**`store.js`**
 ```javascript
-import { createComponent } from './basedom/components.js';
+import { createStore } from './basedom/state.js';
 
-const MyComponent = createComponent('div', {
-  onMount: () => console.log('Component mounted'),
-  onUnmount: () => console.log('Component unmounted'),
-  children: ['Hello World']
-});
-```
-
-### Error Boundaries
-```javascript
-import { setErrorBoundary } from './basedom/render.js';
-
-setErrorBoundary(({ error }) => 
-  createComponent('div', {
-    children: ['Error: ' + error.message]
-  })
-);
-```
-
-### Navigation Guards
-```javascript
-import { addGlobalBeforeEnterGuard } from './basedom/navigation.js';
-
-addGlobalBeforeEnterGuard((context) => {
-  if (context.to.meta.requiresAuth && !isAuthenticated()) {
-    return '/login'; // Redirect
+export const store = createStore({
+  // Simple key-value data
+  values: {
+    currentUser: null,
+    theme: 'dark'
+  },
+  // Structured, table-like data
+  tables: {
+    products: {
+      'prod_1': { name: 'Laptop', price: 1200 },
+      'prod_2': { name: 'Mouse', price: 25 }
+    }
   }
 });
 ```
 
-## Why BaseDOM?
+You can then import and use this `store` object anywhere in your application to get or set global state.
 
-- **No Build Step** - Works directly in modern browsers with ES modules
-- **Small Bundle** - Minimal footprint, maximum performance  
-- **Familiar Syntax** - HTML-first approach with intuitive directives
-- **Real Reactivity** - Fine-grained updates without virtual DOM overhead
-- **HTMX-Inspired** - Declarative server interactions
-- **TypeScript Ready** - Full type support available
+### Declarative AJAX
 
-Start building reactive web apps today with BaseDOM's simple yet powerful approach!
+Fetch content from the server and update the DOM without writing any JavaScript.
+
+| Directive           | Description                                                              |
+| ------------------- | ------------------------------------------------------------------------ |
+| `x-get="url"`       | Makes a GET request to the URL.                                          |
+| `x-post="url"`      | Makes a POST request (often used on a `<form>`).                         |
+| `x-trigger="event"` | The event that triggers the request (e.g., `click`, `load`, `submit`).   |
+| `x-target="selector"` | A CSS selector for the element to be updated. Defaults to the element itself. |
+| `x-swap="method"`   | How to update the target: `innerHTML`, `outerHTML`, `append`, `prepend`, etc. |
+| `x-select="selector"`| Selects a portion of the HTML response to use for the swap.              |
+
+**Example:**
+```html
+<!-- When this button is clicked, it fetches /api/items and replaces the content of #item-list -->
+<button x-get="/api/items" x-target="#item-list" x-swap="innerHTML">
+  Refresh Items
+</button>
+
+<ul id="item-list">
+  <!-- Content will be loaded here -->
+</ul>
+```
+
+### Component Composition & Nesting
+
+In BaseDOM, component nesting is primarily handled by the router, which is ideal for creating page layouts.
+
+-   **Router-Outlet Pattern:** A parent route's component (a "layout") contains an element with an `x-outlet` attribute. When a child route is active, its component is rendered inside this outlet. This is the standard way to nest page-level components.
+
+-   **Declarative Nesting (Future Goal):** Currently, you cannot directly import one SFC and use it as a custom tag inside another SFC's template (e.g., having a `<Card>` component and using `<Card></Card>` in another file). The parser will treat `<Card>` as a standard, unknown HTML tag. This is a high-priority feature on the roadmap.
+
+---
+
+## Contributing
+
+We welcome contributions from the community! Whether it's a bug report, a new feature, or improvements to the documentation, your help is appreciated. Please feel free to open an issue or submit a pull request on our [GitHub repository](https://github.com/Named666/BaseDOM).
+
+### TODO & Roadmap
+
+Here are some areas where BaseDOM could be improved. Contributions are welcome!
+
+**High Priority:**
+-   [ ] **Declarative Component Imports & Nesting:** The ability to import an SFC into another and use it as a custom tag (e.g., `<MyComponent>` from `components\my-component.html`). This is the most requested feature for building complex UIs.
+
+**Features & Enhancements:**
+-   [ ] **SFC Lifecycle Hooks:** Implement a way to define `onMount` and `onUnmount` directly in the `<script>` block of an SFC.
+-   [ ] **Keyed List Rendering:** Enhance `x-for` to support a `:key` attribute (`x-for="item in items" :key="item.id"`) for more efficient DOM updates.
+-   [ ] **Props/Attributes Passing:** Improve how props are passed to child components declaratively in the template.
+-   [ ] **Transitions:** Add `x-transition` directives for simple CSS transitions on elements entering or leaving the DOM via `x-if`.
+
+**Tooling & DX:**
+-   [ ] **CLI Tool:** A command-line tool for scaffolding new projects and components.
+
+**Documentation & Testing:**
+-   [ ] **Cookbook:** Create a "cookbook" section with recipes for common patterns (e.g., connecting `createStore` to component signals).
+-   [ ] **Unit & E2E Tests:** Expand the test suite to cover all directives and core functionalities.
+-   [ ] **API Documentation:** Generate detailed API documentation for every exported function.

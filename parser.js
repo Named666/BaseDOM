@@ -550,29 +550,46 @@ function parseTextNode(text, context) {
     if (!text.includes('{{')) {
         return text;
     }
-    // Split text into static and dynamic parts
-    const parts = [];
-    let lastIndex = 0;
     const regex = /\{\{(.*?)\}\}/g;
-    let match;
-    while ((match = regex.exec(text)) !== null) {
-        if (match.index > lastIndex) {
-            parts.push(text.slice(lastIndex, match.index));
-        }
+    const match = text.trim().match(/^\{\{(.*)\}\}$/);
+
+    // If the text is *only* an interpolation, e.g. "{{ children }}"
+    // we can return the raw value, which might be an element or a function
+    if (match) {
         const expr = match[1].trim();
-        parts.push(() => {
+        return () => {
             const contextValue = context[expr];
-            if (contextValue && typeof contextValue === 'function') {
+            if (typeof contextValue === 'function') {
                 return contextValue();
             }
-            return contextValue !== undefined ? contextValue : `{{${expr}}}`;
+            return contextValue;
+        };
+    }
+
+    // Otherwise, handle mixed text and interpolations
+    const parts = [];
+    let lastIndex = 0;
+    let m;
+    while ((m = regex.exec(text)) !== null) {
+        if (m.index > lastIndex) {
+            parts.push(text.slice(lastIndex, m.index));
+        }
+        const expr = m[1].trim();
+        parts.push(() => {
+            const contextValue = context[expr];
+            const value = typeof contextValue === 'function' ? contextValue() : contextValue;
+            // Avoid rendering objects as strings in mixed content
+            if (value instanceof HTMLElement || value instanceof DocumentFragment) {
+                console.warn(`Cannot render HTML element inside mixed text content for expression: {{${expr}}}. Returning empty string.`);
+                return '';
+            }
+            return value !== undefined ? value : `{{${expr}}}`;
         });
         lastIndex = regex.lastIndex;
     }
     if (lastIndex < text.length) {
         parts.push(text.slice(lastIndex));
     }
-    // Return a computed signal that joins all parts
     return computed(() => parts.map(part => typeof part === 'function' ? part() : part).join(''));
 }
 

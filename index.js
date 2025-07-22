@@ -1,3 +1,11 @@
+import * as state from './state.js';
+
+// Expose signals and helpers globally
+window.signal = state.signal;
+window.computed = state.computed;
+window.effect = state.effect;
+// Add any other exports you need globally
+
 import { initialize } from './render.js';
 import { startRouter } from './router.js';
 
