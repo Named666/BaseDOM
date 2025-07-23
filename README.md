@@ -1,6 +1,6 @@
 # BaseDOM
 
-BaseDOM is a lightweight, reactive JavaScript framework for building dynamic web applications without the complexity. Features signal-based reactivity, a declarative component architecture, and powerful directives—all with zero build setup required.
+BaseDOM is a lightweight, reactive JavaScript framework for building dynamic web applications without the complexity. It features signal-based reactivity, a declarative component architecture, and powerful directives—all with zero build setup required.
 
 **No build step required.** BaseDOM works directly in the browser using native ES modules, making it incredibly fast to get started.
 
@@ -16,10 +16,10 @@ The core philosophy of BaseDOM is to provide a developer experience that is:
 ## Key Features
 
 -   🔄 **Signal-based Reactivity** - Fine-grained updates with `signal`, `computed`, and `effect`.
--   🧩 **Single-File Components** - Keep HTML, CSS, and JS in one file with `x-` directives.
+-   🧩 **Single-File Components** - Keep HTML, CSS, and JS in one file with automatic style scoping.
 -   🌐 **Declarative AJAX** - Load dynamic content with HTML attributes, similar to HTMX.
 -   📱 **SPA Routing** - Nested routes, layouts, guards, and programmatic navigation.
--   훅 **Lifecycle Hooks** - Tap into component lifecycle with `onMount` and `onUnmount`.
+-   훅 **Lifecycle Hooks** - Tap into the component lifecycle with `onMount` and `onUnmount`.
 -   🚀 **Zero Build Setup** - Works directly in the browser with ES modules.
 
 ---
@@ -128,11 +128,11 @@ Components are `.html` files composed of three optional sections:
 
 ### Reactivity (`state.js`)
 
-BaseDOM's reactivity is powered by signals.
+BaseDOM's reactivity is powered by signals. Signals are functions that hold a value and notify their dependents when that value changes.
 
--   `signal(initialValue)`: Creates a reactive state container. It returns a tuple: `[getter, setter]`.
--   `computed(fn)`: Creates a read-only signal whose value is derived from other signals.
--   `effect(fn)`: Runs a function and automatically re-runs it whenever a signal it depends on changes.
+-   `signal(initialValue)`: Creates a reactive state container. It returns a tuple: `[getter, setter]`. Call the getter `mySignal()` to get the value, and the setter `mySignal(newValue)` to update it.
+-   `computed(fn)`: Creates a read-only signal whose value is derived from other signals. It re-calculates its value automatically when its dependencies change.
+-   `effect(fn)`: Runs a function and automatically re-runs it whenever a signal it depends on changes. Useful for side effects like logging, data fetching, or manual DOM manipulation. Returns a `dispose` function to stop the effect.
 
 ### Template Syntax (Directives)
 
@@ -140,18 +140,18 @@ Directives are special `x-` attributes in your template that provide dynamic fun
 
 | Directive | Description | Example |
 | --- | --- | --- |
-| `{{ expression }}` | Renders the result of a JavaScript expression as text. | `<p>{{ user.name.toUpperCase() }}</p>` |
-| `x-if="condition"` | Conditionally renders an element. | `<div x-if="isLoggedIn">Welcome!</div>` |
+| `{{ expression }}` | Renders the result of a JavaScript expression as text. Reactively updates. | `<p>{{ user.name.toUpperCase() }}</p>` |
+| `x-if="condition"` | Conditionally renders an element from the DOM. | `<div x-if="isLoggedIn">Welcome!</div>` |
 | `x-else` | Renders if the preceding `x-if` was false. | `<div x-else>Please log in.</div>` |
-| `x-for="item in items"` | Renders an element for each item in an array. | `<li x-for="todo in todos">{{ todo.text }}</li>` |
-| `x-on:event="handler"` | Attaches an event listener. | `<button x-on:click="increment">+</button>` |
-| `x-bind:attribute="expr"` | Binds an attribute to a dynamic value. | `<a x-bind:href="url">Link</a>` |
-| `x-model="signal"` | Provides two-way data binding for form inputs. | `<input x-model="searchText">` |
-| `x-show="condition"` | Toggles the element's `display` style. | `<div x-show="isVisible">...</div>` |
+| `x-for="item in items"` | Renders an element for each item in an array. Supports `(item, index)`. | `<li x-for="todo in todos">{{ todo.text }}</li>` |
+| `x-on:event="handler"` | Attaches an event listener. Shorthand: `@event`. | `<button x-on:click="increment">+</button>` |
+| `x-bind:attribute="expr"` | Binds an attribute to a dynamic value. Shorthand: `:attribute`. | `<a x-bind:href="url">Link</a>` |
+| `x-model="signalName"` | Provides two-way data binding for form inputs. | `<input x-model="searchText">` |
+| `x-show="condition"` | Toggles the element's `display` style between `''` and `'none'`. | `<div x-show="isVisible">...</div>` |
 
 ### Scoped Styling
 
-Styles inside a `<style>` tag are automatically scoped. You can also target the component's root element itself using the `&` symbol.
+Styles inside a `<style>` tag in an SFC are automatically scoped to that component. This prevents styles from leaking out and affecting other parts of your application. You can also target the component's root element itself using the `&` symbol.
 
 ```html
 <style>
@@ -169,7 +169,7 @@ Styles inside a `<style>` tag are automatically scoped. You can also target the 
 
 ### Programmatic Components (`html.js`)
 
-While SFCs are great for pages and large components, you can also create components programmatically using helper functions. This is useful for creating reusable, composable UI elements in JavaScript.
+While SFCs are great, you can also create components programmatically in JavaScript. This is useful for creating reusable, composable UI elements.
 
 -   **Element Factories:** `html.js` exports functions for all standard HTML tags (`div`, `p`, `button`, etc.).
 -   **Lifecycle Hooks:** Components can have `onMount` and `onUnmount` lifecycle hooks.
@@ -186,14 +186,13 @@ function ProgrammaticCounter() {
       .counter { padding: 1rem; border: 1px solid #ccc; }
       p { color: green; }
     `,
-    onMount: () => console.log('Counter mounted!'),
+    onMount: (element) => console.log('Counter mounted!', element),
     onUnmount: () => console.log('Counter unmounted!'),
     children: [
-      p({ children: ['Count: ', count] }),
+      p({}, 'Count: ', count), // Pass signals directly as children
       button({
-        attrs: { 'x-on:click': () => setCount(count() + 1) },
-        children: 'Increment'
-      })
+        onClick: () => setCount(count() + 1) // Event handlers can be passed directly
+      }, 'Increment')
     ]
   });
 }
@@ -201,9 +200,10 @@ function ProgrammaticCounter() {
 
 ### Keyed List Rendering
 
-For efficiently rendering dynamic lists, use the `List` component. It performs keyed reconciliation, ensuring minimal DOM updates.
+For efficiently rendering dynamic lists, use the `List` component. It performs keyed reconciliation, ensuring minimal DOM updates (adding, removing, or reordering elements) instead of re-rendering the entire list.
 
 ```javascript
+import { ul } from './basedom/html.js';
 import { List } from './basedom/html.js';
 import { signal } from './basedom/state.js';
 
@@ -212,10 +212,12 @@ const [items, setItems] = signal([
   { id: 2, text: 'Second' }
 ]);
 
-const MyList = () => List(
-  items, // The signal containing the array
-  (item) => item.id, // The key function
-  (item) => li({ children: item.text }) // The render function for each item
+const MyList = () => ul({}, 
+  List(
+    items, // The signal containing the array
+    (item) => item.id, // The key function
+    (item) => li({ key: item.id }, item.text) // The render function for each item
+  )
 );
 ```
 
@@ -223,44 +225,59 @@ const MyList = () => List(
 
 BaseDOM includes a file-based router with support for nesting, layouts, and navigation guards.
 
--   `defineRoute(config)`: Defines a route and its component.
--   `startRouter()`: Initializes the router (handled by `startApp`).
+-   `defineRoute(config)`: Defines a route. It can take a path string or a config object with `path`, `component`, `children`, `guards`, and `meta`.
+-   `startApp()`: Initializes the router and application.
 -   `navigate(path)`: Programmatically navigates to a new path.
 
-**Layouts and Nested Routes:** A layout is a parent component that contains an `<div x-outlet="main"></div>`. Child routes are rendered inside this outlet.
+**Layouts and Nested Routes:** A layout is a parent component that contains an `<div x-outlet></div>` or `<div x-outlet="main"></div>`. Child routes are rendered inside this outlet.
 
-### Form Handling (`form.js`)
+```javascript
+// app.js
+import { defineRoute } from './basedom/router.js';
+
+defineRoute({
+  path: '/app',
+  component: './layouts/AppLayout.html', // Contains <div x-outlet></div>
+  children: [
+    { path: '/', component: './pages/Dashboard.html' }, // Rendered in AppLayout's outlet
+    { path: '/profile', component: './pages/Profile.html' }
+  ]
+});
+```
+
+### Form Handling (`form.js` & `validation.js`)
 
 BaseDOM provides a comprehensive solution for managing forms.
 
--   `createForm(config)`: Creates a form controller with state, validation, and submission logic.
+-   `createForm(config)`: Creates a form controller with state (`fields`, `errors`, `isValid`), validation, and submission logic.
 -   `Form`, `Field`, `Submit`: Programmatic components to easily build forms.
--   `validation.js`: A set of common validation helpers (`required`, `minLength`, `email`, etc.).
+-   `validation.js`: A set of common validation helpers (`required`, `minLength`, `email`, `composeValidators`).
 
 **Example:**
 
 ```javascript
-import { createForm, Form, Field, Submit } from './basedom/form.js';
-import { required, email } from './basedom/validation.js';
+import { Form, Field, Submit } from './basedom/form.js';
+import { required, email, minLength, composeValidators } from './basedom/validation.js';
 
 function MyForm() {
-  const form = createForm({
-    initialValues: { email: '', password: '' },
-    validators: {
-      email: [required(), email()],
-      password: [required()]
-    },
-    onSubmit: (values) => {
-      alert(JSON.stringify(values));
-    }
-  });
-
   return Form({
-    form,
+    // onSubmit is automatically wrapped with validation and state updates
+    onSubmit: (values) => {
+      console.log('Submitting:', values);
+      // Returns a promise to set submitting state
+      return new Promise(resolve => setTimeout(resolve, 1000));
+    },
+    // Define validators directly on the Form component
+    validators: {
+      email: composeValidators(required(), email()),
+      password: composeValidators(required(), minLength(8))
+    },
     children: [
-      Field({ name: 'email', label: 'Email' }),
+      // Fields automatically connect to the form's state
+      Field({ name: 'email', label: 'Email', type: 'email' }),
       Field({ name: 'password', label: 'Password', type: 'password' }),
-      Submit({ text: 'Log In' })
+      // Submit button is automatically disabled while submitting
+      Submit({ text: 'Log In', loadingText: 'Logging in...' })
     ]
   });
 }
@@ -268,17 +285,19 @@ function MyForm() {
 
 ### Global State (`createStore`)
 
-For complex state shared between components, `createStore` provides a powerful global store with features like schemas, transactions, and fine-grained listeners.
+For complex state shared between components, `createStore` provides a powerful global store with features like schemas, transactions, and fine-grained listeners. It's excellent for managing user data, application settings, or any structured data.
 
 **`store.js`**
 ```javascript
 import { createStore } from './basedom/state.js';
 
 export const store = createStore({
+  // Simple key-value pairs
   values: {
     currentUser: null,
     theme: 'dark'
   },
+  // Structured, table-like data
   tables: {
     products: {
       'prod_1': { name: 'Laptop', price: 1200 },
@@ -288,20 +307,29 @@ export const store = createStore({
 });
 ```
 
-The store API provides methods like `getValue`, `setValue`, `getRow`, `setRow`, `transaction`, and dozens of listeners (`addValueListener`, `addRowListener`, etc.) for surgical state updates.
+The store API provides dozens of methods like `getValue`, `setValue`, `getRow`, `setRow`, `transaction`, and listeners (`addValueListener`, `addRowListener`, etc.) for surgical state updates.
 
 ### Declarative AJAX
 
-Fetch content from the server and update the DOM without writing any JavaScript.
+Fetch content from the server and update the DOM without writing any JavaScript, inspired by HTMX.
 
 | Directive | Description |
 | --- | --- |
 | `x-get="url"` | Makes a GET request to the URL. |
 | `x-post="url"` | Makes a POST request (often used on a `<form>`). |
-| `x-trigger="event"` | The event that triggers the request (e.g., `click`, `load`, `submit`). |
+| `x-trigger="event"` | The event that triggers the request (e.g., `click`, `load`, `submit`). Defaults based on element. |
 | `x-target="selector"` | A CSS selector for the element to be updated. Defaults to the element itself. |
-| `x-swap="method"` | How to update the target: `innerHTML`, `outerHTML`, `append`, `prepend`, etc. |
+| `x-swap="method"` | How to update the target: `innerHTML` (default), `outerHTML`, `append`, `prepend`, etc. |
 | `x-select="selector"`| Selects a portion of the HTML response to use for the swap. |
+
+**Example:**
+```html
+<!-- Load content into a div when a button is clicked -->
+<div x-target="#content">
+  <button x-get="/api/content" x-swap="innerHTML">Load Content</button>
+</div>
+<div id="content"></div>
+```
 
 ---
 

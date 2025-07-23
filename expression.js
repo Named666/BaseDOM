@@ -1,5 +1,4 @@
-// expression.js
-// Expression parsing and evaluation logic extracted from parser.js
+// expression.jsS
 
 /**
  * Safe expression parser that supports complex JavaScript expressions

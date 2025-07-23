@@ -34,3 +34,12 @@ export * from './html.js';
 export * from './render.js';
 export * from './router.js';
 export * from './parser.js';
+
+// Development mode flag
+const DEV_MODE = !import.meta.env?.PROD && globalThis.location?.hostname === 'localhost';
+
+function devWarn(message, node) {
+    if (DEV_MODE) {
+        console.warn(`[BaseDOM]: ${message}`, node);
+    }
+}
