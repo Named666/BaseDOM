@@ -4,6 +4,7 @@ import { signal, effect, computed } from './state.js';
 import { ExpressionParser, expressionParser, _reactive, evaluateExpression } from './expression.js';
 import { 
     xIfDirective, 
+    xElseDirective,
     xForDirective, 
     xOnDirective, 
     xBindDirective, 
@@ -101,22 +102,8 @@ export async function parseComponent(htmlText) {
         // Support multiple root nodes (fragment) for DSL style
         let nodes = Array.from(doc.body.childNodes).filter(n => n.nodeType === Node.ELEMENT_NODE || n.nodeType === Node.TEXT_NODE);
         
-        // Filter out x-else nodes that are paired with x-if nodes
-        nodes = nodes.filter((node, index) => {
-            if (node.nodeType === Node.ELEMENT_NODE && node.hasAttribute && node.hasAttribute('x-else')) {
-                // Look for a previous x-if sibling (skipping text nodes)
-                for (let i = index - 1; i >= 0; i--) {
-                    const prevNode = nodes[i];
-                    if (prevNode.nodeType === Node.ELEMENT_NODE && prevNode.hasAttribute && prevNode.hasAttribute('x-if')) {
-                        return false; // Skip this x-else, it's paired with x-if
-                    }
-                    if (prevNode.nodeType === Node.ELEMENT_NODE) {
-                        break; // Found a non-x-if element, stop looking
-                    }
-                }
-            }
-            return true;
-        });
+        // Apply directive preprocessing (e.g., filter out paired x-else nodes)
+        nodes = preprocessNodes(nodes);
 
         // Cache component instances to prevent signal re-creation
         let cachedContext = null;
@@ -230,52 +217,41 @@ export function registerDirective(name, handler) {
     directiveRegistry.set(name, handler);
 }
 
+// Preprocess nodes using directive preprocessors
+function preprocessNodes(nodes) {
+    let processedNodes = nodes;
+    
+    // Apply preprocessing from all registered directives that have a preprocess function
+    for (const [name, directive] of directiveRegistry) {
+        if (directive.preprocess && typeof directive.preprocess === 'function') {
+            processedNodes = directive.preprocess(processedNodes);
+        }
+    }
+    
+    return processedNodes;
+}
+
 // Process directives on a node with a standardized interface
 function processDirectives(node, context, parsingContext) {
-    // Control flow directives get first priority and can return early
+    // First pass: Check if any control flow directive wants to handle this node
     for (const [name, directive] of directiveRegistry) {
-        if (directive.controlFlow && node.hasAttribute && node.hasAttribute(name)) {
+        if (directive.controlFlow) {
+            // Check if this directive applies to this node
             const result = directive.handle({ node, context, ...parsingContext });
-            if (result !== null) return result;
+            if (result !== null) {
+                return result; // Control flow directive handled the node
+            }
         }
     }
 
-    // If no control flow directive handled the node, process attribute directives
+    // Second pass: No control flow directive handled the node, process attribute directives
     const props = { attrs: {} };
     
-    // Pre-scan to find relevant attribute directives
-    const nodeAttributes = Array.from(node.attributes || []);
-    const relevantDirectives = new Set();
-    
-    nodeAttributes.forEach(attr => {
-        // Direct matches
-        if (directiveRegistry.has(attr.name)) {
-            const directive = directiveRegistry.get(attr.name);
-            if (!directive.controlFlow) {
-                relevantDirectives.add(attr.name);
-            }
-        }
-        
-        // Check for prefixed directives
-        for (const [name, directive] of directiveRegistry) {
-            if (!directive.controlFlow && attr.name.startsWith(name + ':')) {
-                relevantDirectives.add(name);
-            }
-        }
-    });
-    
-    // Process all relevant attribute directives
-    relevantDirectives.forEach(name => {
-        const directive = directiveRegistry.get(name);
-        if (directive && !directive.controlFlow) {
+    // Process all non-control-flow directives
+    for (const [name, directive] of directiveRegistry) {
+        if (!directive.controlFlow) {
             directive.handle({ node, context, ...parsingContext }, props);
         }
-    });
-    
-    // Always process default directive for remaining attributes
-    const defaultDirective = directiveRegistry.get('default');
-    if (defaultDirective) {
-        defaultDirective.handle({ node, context, ...parsingContext }, props);
     }
     
     return props;
@@ -283,6 +259,7 @@ function processDirectives(node, context, parsingContext) {
 
 // Register built-in directives
 registerDirective('x-if', xIfDirective);
+registerDirective('x-else', xElseDirective);
 registerDirective('x-for', xForDirective);
 registerDirective('x-on', xOnDirective);
 registerDirective('x-bind', xBindDirective);

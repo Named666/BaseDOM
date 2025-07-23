@@ -2,14 +2,49 @@
 import { computed } from './state.js';
 import { evaluateExpression, _reactive } from './expression.js';
 
+/**
+ * Directive Interface:
+ * {
+ *   controlFlow: boolean,           // Whether this directive controls rendering flow
+ *   preprocess?: (nodes) => nodes,  // Optional: Filter/modify node list before parsing
+ *   handle: (parsingContext, props?) => result  // Main directive logic
+ * }
+ * 
+ * Control flow directives return a computed/function or null
+ * Attribute directives modify the props object
+ */
+
 // --- Control Flow Directives ---
 
 export const xIfDirective = {
     controlFlow: true,
+    // Preprocessing function to filter out paired x-else nodes
+    preprocess: (nodes) => {
+        return nodes.filter((node, index) => {
+            if (node.nodeType === Node.ELEMENT_NODE && node.hasAttribute && node.hasAttribute('x-else')) {
+                // Look for a previous x-if sibling (skipping text nodes)
+                for (let i = index - 1; i >= 0; i--) {
+                    const prevNode = nodes[i];
+                    if (prevNode.nodeType === Node.ELEMENT_NODE && prevNode.hasAttribute && prevNode.hasAttribute('x-if')) {
+                        return false; // Skip this x-else, it's paired with x-if
+                    }
+                    if (prevNode.nodeType === Node.ELEMENT_NODE) {
+                        break; // Found a non-x-if element, stop looking
+                    }
+                }
+            }
+            return true;
+        });
+    },
     handle: (parsingContext) => {
         const { node, context, parseNode } = parsingContext;
+        
+        // Check if this directive applies to this node
+        if (!node.hasAttribute || !node.hasAttribute('x-if')) {
+            return null;
+        }
+        
         const ifDirective = node.getAttribute('x-if');
-        if (!ifDirective) return null;
 
         // Find the corresponding x-else node by traversing siblings
         let elseNode = null;
@@ -46,12 +81,33 @@ export const xIfDirective = {
     }
 };
 
+export const xElseDirective = {
+    controlFlow: true,
+    handle: (parsingContext) => {
+        const { node } = parsingContext;
+        
+        // Check if this directive applies to this node
+        if (!node.hasAttribute || !node.hasAttribute('x-else')) {
+            return null;
+        }
+
+        // If we reach this point, it means x-else wasn't paired with x-if
+        console.warn('Found standalone x-else directive without corresponding x-if:', node);
+        return null; // Don't render standalone x-else
+    }
+};
+
 export const xForDirective = {
     controlFlow: true,
     handle: (parsingContext) => {
         const { node, context, parseNode } = parsingContext;
+        
+        // Check if this directive applies to this node
+        if (!node.hasAttribute || !node.hasAttribute('x-for')) {
+            return null;
+        }
+        
         const forDirective = node.getAttribute('x-for');
-        if (!forDirective) return null;
 
         // Parse the for expression - support "item in items" and "item, index in items"
         const forMatch = forDirective.match(/^(\w+)(?:\s*,\s*(\w+))?\s+in\s+(.+)$/);
@@ -100,6 +156,10 @@ export const xOnDirective = {
     controlFlow: false,
     handle: (parsingContext, props) => {
         const { node, context } = parsingContext;
+        
+        // Check if this node has any x-on: attributes
+        if (!node.attributes) return;
+        
         for (const attr of node.attributes) {
             if (attr.name.startsWith('x-on:')) {
                 const eventName = attr.name.substring(5);
@@ -134,6 +194,10 @@ export const xBindDirective = {
     controlFlow: false,
     handle: (parsingContext, props) => {
         const { node, context } = parsingContext;
+        
+        // Check if this node has any x-bind: attributes
+        if (!node.attributes) return;
+        
         for (const attr of node.attributes) {
             if (attr.name.startsWith('x-bind:')) {
                 const propName = attr.name.substring(7);
@@ -150,16 +214,16 @@ export const xShowDirective = {
     controlFlow: false,
     handle: (parsingContext, props) => {
         const { node, context } = parsingContext;
-        for (const attr of node.attributes) {
-            if (attr.name === 'x-show') {
-                const showExpr = attr.value;
-                if (!props.style) props.style = {};
-                props.style.display = computed(() => {
-                    const shouldShow = evaluateExpression(showExpr, context);
-                    return shouldShow ? '' : 'none';
-                });
-            }
-        }
+        
+        // Check if this node has x-show attribute
+        if (!node.hasAttribute || !node.hasAttribute('x-show')) return;
+        
+        const showExpr = node.getAttribute('x-show');
+        if (!props.style) props.style = {};
+        props.style.display = computed(() => {
+            const shouldShow = evaluateExpression(showExpr, context);
+            return shouldShow ? '' : 'none';
+        });
     }
 };
 
@@ -167,52 +231,52 @@ export const xModelDirective = {
     controlFlow: false,
     handle: (parsingContext, props) => {
         const { node, context } = parsingContext;
-        for (const attr of node.attributes) {
-            if (attr.name === 'x-model') {
-                const modelExpr = attr.value.trim();
-                // Find the signal in context
-                const signal = context[modelExpr];
-                if (signal && typeof signal === 'function') {
-                    // Two-way binding for input elements
-                    const tagName = node.tagName.toLowerCase();
-                    if (tagName === 'input' || tagName === 'textarea') {
-                        // Set initial value
-                        props.attrs.value = computed(() => signal());
-                        // Handle input events for two-way binding
-                        const inputHandler = (event) => {
-                            const newValue = event.target.value;
-                            // Assuming signals have a setter when called with a value
-                            if (signal.set) {
-                                signal.set(newValue);
-                            } else {
-                                // Try to call as setter
-                                signal(newValue);
-                            }
-                        };
-                        props.onInput = inputHandler;
-                        props.onChange = inputHandler;
-                    } else if (tagName === 'select') {
-                        props.attrs.value = computed(() => signal());
-                        props.onChange = (event) => {
-                            const newValue = event.target.value;
-                            if (signal.set) {
-                                signal.set(newValue);
-                            } else {
-                                signal(newValue);
-                            }
-                        };
-                    } else if (node.getAttribute('type') === 'checkbox') {
-                        props.attrs.checked = computed(() => signal());
-                        props.onChange = (event) => {
-                            const newValue = event.target.checked;
-                            if (signal.set) {
-                                signal.set(newValue);
-                            } else {
-                                signal(newValue);
-                            }
-                        };
+        
+        // Check if this node has x-model attribute
+        if (!node.hasAttribute || !node.hasAttribute('x-model')) return;
+        
+        const modelExpr = node.getAttribute('x-model').trim();
+        // Find the signal in context
+        const signal = context[modelExpr];
+        if (signal && typeof signal === 'function') {
+            // Two-way binding for input elements
+            const tagName = node.tagName.toLowerCase();
+            if (tagName === 'input' || tagName === 'textarea') {
+                // Set initial value
+                props.attrs.value = computed(() => signal());
+                // Handle input events for two-way binding
+                const inputHandler = (event) => {
+                    const newValue = event.target.value;
+                    // Assuming signals have a setter when called with a value
+                    if (signal.set) {
+                        signal.set(newValue);
+                    } else {
+                        // Try to call as setter
+                        signal(newValue);
                     }
-                }
+                };
+                props.onInput = inputHandler;
+                props.onChange = inputHandler;
+            } else if (tagName === 'select') {
+                props.attrs.value = computed(() => signal());
+                props.onChange = (event) => {
+                    const newValue = event.target.value;
+                    if (signal.set) {
+                        signal.set(newValue);
+                    } else {
+                        signal(newValue);
+                    }
+                };
+            } else if (node.getAttribute('type') === 'checkbox') {
+                props.attrs.checked = computed(() => signal());
+                props.onChange = (event) => {
+                    const newValue = event.target.checked;
+                    if (signal.set) {
+                        signal.set(newValue);
+                    } else {
+                        signal(newValue);
+                    }
+                };
             }
         }
     }
