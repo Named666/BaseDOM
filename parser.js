@@ -1,283 +1,8 @@
 // parser.js
 import { Element } from './html.js';
 import { signal, effect, computed } from './state.js';
+import { ExpressionParser, expressionParser, _reactive, evaluateExpression } from './expression.js';
 
-// --- Advanced Expression Parser ---
-
-/**
- * Safe expression parser that supports complex JavaScript expressions
- * while preventing dangerous operations like eval or global access
- */
-class ExpressionParser {
-    constructor() {
-        // Whitelist of safe operators and keywords
-        this.safeOperators = [
-            '+', '-', '*', '/', '%', '**',
-            '==', '===', '!=', '!==', '<', '>', '<=', '>=',
-            '&&', '||', '!', '?', ':',
-            '.', '[', ']', '(', ')'
-        ];
-        
-        // Whitelist of safe built-in functions/objects
-        this.safeFunctions = new Set([
-            'Math', 'String', 'Number', 'Boolean', 'Array', 'Object', 'Date',
-            'parseInt', 'parseFloat', 'isNaN', 'isFinite'
-        ]);
-    }
-
-    /**
-     * Evaluates an expression safely within the given context
-     * @param {string} expression - The expression to evaluate
-     * @param {object} context - The context object containing variables
-     * @returns {*} The result of the expression
-     */
-    evaluate(expression, context) {
-        try {
-            // Trim and normalize the expression
-            expression = expression.trim();
-            
-            // Handle empty expressions
-            if (!expression) {
-                return undefined;
-            }
-            
-            // Quick path for simple property access
-            if (this.isSimplePropertyAccess(expression)) {
-                return this.evaluateSimpleAccess(expression, context);
-            }
-            
-            // Create a safe evaluation function for complex expressions
-            const safeEval = this.createSafeEvaluator(expression, context);
-            return safeEval();
-        } catch (error) {
-            console.warn(`Expression evaluation failed: ${expression}`, error);
-            return undefined;
-        }
-    }
-
-    /**
-     * Fast path for simple property access like "user.name" or "items[0]"
-     * @param {string} expression - The simple expression
-     * @param {object} context - The context object
-     * @returns {*} The evaluated result
-     */
-    evaluateSimpleAccess(expression, context) {
-        try {
-            // Split by dots and handle bracket notation
-            const parts = expression.split('.');
-            let current = context[parts[0]];
-            
-            // Handle reactive root
-            current = _reactive(current);
-            
-            // Navigate the property chain
-            for (let i = 1; i < parts.length; i++) {
-                if (current == null) return undefined;
-                
-                const part = parts[i];
-                // Handle bracket notation like "items[0]"
-                const bracketMatch = part.match(/^([a-zA-Z_$][a-zA-Z0-9_$]*)\[(\d+)\]$/);
-                if (bracketMatch) {
-                    const [, prop, index] = bracketMatch;
-                    current = current[prop];
-                    current = _reactive(current);
-                    if (Array.isArray(current)) {
-                        current = current[parseInt(index, 10)];
-                    }
-                } else {
-                    current = current[part];
-                }
-                current = _reactive(current);
-            }
-            
-            return current;
-        } catch (error) {
-            console.warn(`Simple access evaluation failed: ${expression}`, error);
-            return undefined;
-        }
-    }
-
-    /**
-     * Creates a safe evaluator function for the given expression
-     * @param {string} expression - The expression to parse
-     * @param {object} context - The context object
-     * @returns {Function} A function that evaluates the expression
-     */
-    createSafeEvaluator(expression, context) {
-        // Validate the expression for safety
-        this.validateExpression(expression);
-        
-        // Create a safe context with whitelisted globals
-        const safeContext = this.createSafeContext(context);
-        
-        // Build the evaluator function
-        const paramNames = Object.keys(safeContext);
-        const paramValues = Object.values(safeContext);
-        
-        // Wrap the expression to handle reactive values
-        const wrappedExpression = this.wrapReactiveAccess(expression, paramNames);
-        
-        // Create and return the function
-        const func = new Function(...paramNames, `return (${wrappedExpression})`);
-        
-        return () => func(...paramValues);
-    }
-
-    /**
-     * Validates an expression for potentially dangerous code
-     * @param {string} expression - The expression to validate
-     */
-    validateExpression(expression) {
-        // Check for dangerous patterns
-        const dangerousPatterns = [
-            /\beval\b/,
-            /\bFunction\b/,
-            /\bwindow\b/,
-            /\bdocument\b/,
-            /\bglobal\b/,
-            /\bprocess\b/,
-            /\brequire\b/,
-            /\bimport\b/,
-            /\bexport\b/,
-            /\b__proto__\b/,
-            /\bconstructor\b/,
-            /\bprototype\b/
-        ];
-
-        for (const pattern of dangerousPatterns) {
-            if (pattern.test(expression)) {
-                throw new Error(`Unsafe expression: contains forbidden pattern ${pattern}`);
-            }
-        }
-    }
-
-    /**
-     * Creates a safe context by wrapping the original context
-     * @param {object} context - The original context
-     * @returns {object} The safe context
-     */
-    createSafeContext(context) {
-        const safeContext = {};
-        
-        // Add context properties
-        for (const [key, value] of Object.entries(context)) {
-            safeContext[key] = value;
-        }
-        
-        // Add safe built-in functions
-        for (const funcName of this.safeFunctions) {
-            if (typeof globalThis[funcName] !== 'undefined') {
-                safeContext[funcName] = globalThis[funcName];
-            }
-        }
-        
-        return safeContext;
-    }
-
-    /**
-     * Wraps property access to handle reactive values (signals)
-     * @param {string} expression - The original expression
-     * @param {Array} paramNames - Available parameter names
-     * @returns {string} The wrapped expression
-     */
-    wrapReactiveAccess(expression, paramNames) {
-        // Enhanced approach with better pattern matching
-        let wrappedExpression = expression;
-        
-        // Sort parameters by length (longest first) to avoid partial replacements
-        const sortedParams = [...paramNames].sort((a, b) => b.length - a.length);
-        
-        // Replace property access with reactive-aware access
-        for (const param of sortedParams) {
-            // More sophisticated regex that avoids replacing parts of other identifiers
-            // and handles property access chains
-            const regex = new RegExp(`\\b${this.escapeRegex(param)}\\b(?=\\s*[.\\[\\s)*+\\-/=!<>&|?:]|$)`, 'g');
-            wrappedExpression = wrappedExpression.replace(regex, `_reactive(${param})`);
-        }
-        
-        return wrappedExpression;
-    }
-
-    /**
-     * Escapes special regex characters in a string
-     * @param {string} string - The string to escape
-     * @returns {string} The escaped string
-     */
-    escapeRegex(string) {
-        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    }
-
-    /**
-     * Checks if an expression is a simple property access
-     * @param {string} expression - The expression to check
-     * @returns {boolean} True if it's a simple property access
-     */
-    isSimplePropertyAccess(expression) {
-        // Check if expression is just a simple property access like "user.name" or "items[0]"
-        const simplePattern = /^[a-zA-Z_$][a-zA-Z0-9_$]*(\.[a-zA-Z_$][a-zA-Z0-9_$]*|\[\d+\])*$/;
-        return simplePattern.test(expression.trim());
-    }
-}
-
-// Create a global instance
-const expressionParser = new ExpressionParser();
-
-/**
- * Helper function to safely get reactive values
- * @param {*} value - The value to get (could be a signal/function or regular value)
- * @returns {*} The actual value
- */
-function _reactive(value) {
-    // Handle null/undefined
-    if (value == null) {
-        return value;
-    }
-    
-    // Handle functions (signals)
-    if (typeof value === 'function') {
-        try {
-            const result = value();
-            // Recursively handle nested reactive values
-            return _reactive(result);
-        } catch (error) {
-            console.warn('Error getting reactive value:', error);
-            return undefined;
-        }
-    }
-    
-    // Handle arrays - make them reactive-aware
-    if (Array.isArray(value)) {
-        return value.map(item => _reactive(item));
-    }
-    
-    // Handle plain objects - make properties reactive-aware for deep access
-    if (value && typeof value === 'object' && value.constructor === Object) {
-        const reactiveObj = {};
-        for (const [key, val] of Object.entries(value)) {
-            reactiveObj[key] = _reactive(val);
-        }
-        return reactiveObj;
-    }
-    
-    // Return primitive values as-is
-    return value;
-}
-
-/**
- * Safely evaluates an expression in the given context
- * @param {string} expression - The expression to evaluate
- * @param {object} context - The context containing variables
- * @returns {*} The evaluated result
- */
-function evaluateExpression(expression, context) {
-    // Add the reactive helper to the context
-    const enhancedContext = {
-        ...context,
-        _reactive
-    };
-    
-    return expressionParser.evaluate(expression, enhancedContext);
-}
 
 // --- Core Parsing Logic ---
 
@@ -423,10 +148,7 @@ function extractParts(htmlText) {
 // --- Node Parsing and Directive Handling ---
 
 
-// --- Special fetch/trigger directive attributes ---
-const FETCH_TRIGGER_ATTRS = [
-    'x-get', 'x-post', 'x-swap', 'x-select', 'x-trigger', 'x-push-url', 'x-replace-url', 'x-target'
-];
+
 
 // --- Modular Directive Registry ---
 
@@ -437,12 +159,12 @@ export function registerDirective(name, handler) {
     directiveRegistry.set(name, handler);
 }
 
+
 // Built-in directives registration
 registerDirective('x-if', (node, context, props, fetchConfig) => {
     const ifDirective = node.getAttribute('x-if');
     if (ifDirective) {
         let elseNode = null;
-        
         // Find the corresponding x-else node by traversing siblings
         let sibling = node.nextSibling;
         while (sibling) {
@@ -455,7 +177,6 @@ registerDirective('x-if', (node, context, props, fetchConfig) => {
             }
             sibling = sibling.nextSibling;
         }
-        
         return handleIfElseDirective(node, ifDirective, elseNode, context);
     }
     return null;
@@ -472,7 +193,6 @@ registerDirective('x-on', (node, context, props) => {
         if (attr.name.startsWith('x-on:')) {
             const eventName = attr.name.substring(5);
             const handlerExpr = attr.value;
-            
             // Support both function references and function calls
             props[`on${eventName.charAt(0).toUpperCase() + eventName.slice(1)}`] = (event) => {
                 // Add event and common event properties to context
@@ -482,7 +202,6 @@ registerDirective('x-on', (node, context, props) => {
                     $target: event.target,
                     $currentTarget: event.currentTarget
                 };
-                
                 // Check if it's a simple function reference or a call expression
                 if (handlerExpr.includes('(')) {
                     // Function call expression like "toggle(item)" or "handleClick($event)"
@@ -504,7 +223,6 @@ registerDirective('x-bind', (node, context, props) => {
         if (attr.name.startsWith('x-bind:')) {
             const propName = attr.name.substring(7);
             const expr = attr.value;
-            
             props[propName] = computed(() => {
                 return evaluateExpression(expr, context);
             });
@@ -517,7 +235,6 @@ registerDirective('x-show', (node, context, props) => {
         if (attr.name === 'x-show') {
             const showExpr = attr.value;
             if (!props.style) props.style = {};
-            
             props.style.display = computed(() => {
                 const shouldShow = evaluateExpression(showExpr, context);
                 return shouldShow ? '' : 'none';
@@ -530,17 +247,14 @@ registerDirective('x-model', (node, context, props) => {
     for (const attr of node.attributes) {
         if (attr.name === 'x-model') {
             const modelExpr = attr.value.trim();
-            
             // Find the signal in context
             const signal = context[modelExpr];
             if (signal && typeof signal === 'function') {
                 // Two-way binding for input elements
                 const tagName = node.tagName.toLowerCase();
-                
                 if (tagName === 'input' || tagName === 'textarea') {
                     // Set initial value
                     props.attrs.value = computed(() => signal());
-                    
                     // Handle input events for two-way binding
                     const inputHandler = (event) => {
                         const newValue = event.target.value;
@@ -552,13 +266,10 @@ registerDirective('x-model', (node, context, props) => {
                             signal(newValue);
                         }
                     };
-                    
                     props.onInput = inputHandler;
                     props.onChange = inputHandler;
-                    
                 } else if (tagName === 'select') {
                     props.attrs.value = computed(() => signal());
-                    
                     props.onChange = (event) => {
                         const newValue = event.target.value;
                         if (signal.set) {
@@ -567,10 +278,8 @@ registerDirective('x-model', (node, context, props) => {
                             signal(newValue);
                         }
                     };
-                    
                 } else if (node.getAttribute('type') === 'checkbox') {
                     props.attrs.checked = computed(() => signal());
-                    
                     props.onChange = (event) => {
                         const newValue = event.target.checked;
                         if (signal.set) {
@@ -585,16 +294,21 @@ registerDirective('x-model', (node, context, props) => {
     }
 });
 
-registerDirective('x-trigger', (node, context, props, fetchConfig) => {
-    for (const attr of node.attributes) {
-        if (FETCH_TRIGGER_ATTRS.includes(attr.name)) {
-            props.attrs[attr.name] = attr.value;
-            fetchConfig[attr.name] = attr.value;
+// Register each fetch attribute as its own directive
+const fetchAttrs = [
+    'x-get', 'x-post', 'x-swap', 'x-select', 'x-trigger',
+    'x-push-url', 'x-replace-url', 'x-target'
+];
+
+fetchAttrs.forEach(attr => {
+    registerDirective(attr, (node, context, props, fetchConfig) => {
+        if (node.hasAttribute(attr)) {
+            fetchConfig[attr] = node.getAttribute(attr);
+            props.attrs[attr] = node.getAttribute(attr);
         }
-    }
+    });
 });
 
-// Default attribute handler
 registerDirective('default', (node, context, props) => {
     for (const attr of node.attributes) {
         if (
@@ -602,7 +316,7 @@ registerDirective('default', (node, context, props) => {
             !attr.name.startsWith('x-bind:') &&
             attr.name !== 'x-show' &&
             attr.name !== 'x-model' &&
-            !FETCH_TRIGGER_ATTRS.includes(attr.name)
+            !fetchAttrs.includes(attr.name)
         ) {
             props.attrs[attr.name] = attr.value;
         }
@@ -761,7 +475,7 @@ function parseNode(node, context, componentStyles = null) {
     const componentFactory = Element(tagName);
     const baseComponent = componentFactory({ ...props, children });
 
-    if (Object.keys(fetchConfig).some(k => fetchConfig[k])) {
+    if (Object.keys(fetchConfig).length > 0) {
         return (el) => {
             const result = typeof baseComponent === 'function' ? baseComponent(el) : baseComponent;
             if (el && el.addEventListener) {
