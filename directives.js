@@ -1,7 +1,8 @@
 // directives.js
 import { computed } from './state.js';
 import { evaluateExpression, _reactive } from './expression.js';
-import { parseNode, registerDirective } from './parser.js';
+import { parseNode, registerDirective, parseComponent } from './parser.js';
+import { renderComponent } from './components.js';
 
 /**
  * Directive Interface:
@@ -347,20 +348,51 @@ export const xFetchDirective = {
                         if (targetEl) target = targetEl;
                     }
 
-                    // Apply the swap strategy
-                    const swap = (fetchConfig['x-swap'] || 'innerHTML').toLowerCase();
-                    if (swap === 'outerhtml') {
-                        target.outerHTML = html;
-                    } else if (swap === 'append' || swap === 'beforeend') {
-                        target.insertAdjacentHTML('beforeend', html);
-                    } else if (swap === 'prepend' || swap === 'afterbegin') {
-                        target.insertAdjacentHTML('afterbegin', html);
-                    } else if (swap === 'beforebegin') {
-                        target.insertAdjacentHTML('beforebegin', html);
-                    } else if (swap === 'afterend') {
-                        target.insertAdjacentHTML('afterend', html);
+                    // Check if the response looks like a BaseDOM component
+                    const isComponent = html.includes('<template>') || html.includes('<script>') || 
+                                       (html.includes('<style>') && (html.includes('<template>') || html.includes('<script>')));
+                    
+                    if (isComponent) {
+                        // Parse as BaseDOM component
+                        try {
+                            const componentFn = await parseComponent(html);
+                            const componentInstance = componentFn(context);
+                            
+                            // Apply the swap strategy using renderComponent
+                            const swap = (fetchConfig['x-swap'] || 'innerHTML').toLowerCase();
+                            if (swap === 'outerhtml') {
+                                // For outerHTML, we need to replace the target element entirely
+                                const wrapper = document.createElement('div');
+                                renderComponent(componentInstance, wrapper);
+                                target.outerHTML = wrapper.innerHTML;
+                            } else if (swap === 'append' || swap === 'beforeend') {
+                                const wrapper = document.createElement('div');
+                                renderComponent(componentInstance, wrapper);
+                                target.insertAdjacentHTML('beforeend', wrapper.innerHTML);
+                            } else if (swap === 'prepend' || swap === 'afterbegin') {
+                                const wrapper = document.createElement('div');
+                                renderComponent(componentInstance, wrapper);
+                                target.insertAdjacentHTML('afterbegin', wrapper.innerHTML);
+                            } else if (swap === 'beforebegin') {
+                                const wrapper = document.createElement('div');
+                                renderComponent(componentInstance, wrapper);
+                                target.insertAdjacentHTML('beforebegin', wrapper.innerHTML);
+                            } else if (swap === 'afterend') {
+                                const wrapper = document.createElement('div');
+                                renderComponent(componentInstance, wrapper);
+                                target.insertAdjacentHTML('afterend', wrapper.innerHTML);
+                            } else {
+                                // Default innerHTML - clear target and render component directly
+                                renderComponent(componentInstance, target);
+                            }
+                        } catch (componentError) {
+                            console.warn('Failed to parse response as BaseDOM component, falling back to raw HTML:', componentError);
+                            // Fallback to raw HTML insertion
+                            applyRawHtmlSwap(target, html, fetchConfig);
+                        }
                     } else {
-                        target.innerHTML = html;
+                        // Not a component, use raw HTML insertion
+                        applyRawHtmlSwap(target, html, fetchConfig);
                     }
 
                     // Handle URL updates
@@ -374,8 +406,79 @@ export const xFetchDirective = {
                 }
             };
 
+            // Helper function for raw HTML swapping
+            function applyRawHtmlSwap(target, html, fetchConfig) {
+                const swap = (fetchConfig['x-swap'] || 'innerHTML').toLowerCase();
+                if (swap === 'outerhtml') {
+                    target.outerHTML = html;
+                } else if (swap === 'append' || swap === 'beforeend') {
+                    target.insertAdjacentHTML('beforeend', html);
+                } else if (swap === 'prepend' || swap === 'afterbegin') {
+                    target.insertAdjacentHTML('afterbegin', html);
+                } else if (swap === 'beforebegin') {
+                    target.insertAdjacentHTML('beforebegin', html);
+                } else if (swap === 'afterend') {
+                    target.insertAdjacentHTML('afterend', html);
+                } else {
+                    target.innerHTML = html;
+                }
+            }
+
             el.addEventListener(trigger, handleEvent);
         };
+    }
+};
+
+// --- Lifecycle Hook Directives ---
+
+export const xMountDirective = {
+    controlFlow: false,
+    handle: (parsingContext, props) => {
+        const { node, context } = parsingContext;
+        
+        // Check if this node has x-mount attribute
+        if (!node.hasAttribute || !node.hasAttribute('x-mount')) return;
+        
+        const mountExpr = node.getAttribute('x-mount');
+        const handler = evaluateExpression(mountExpr, context);
+        
+        if (typeof handler === 'function') {
+            props.onMount = handler;
+        }
+    }
+};
+
+export const xUnmountDirective = {
+    controlFlow: false,
+    handle: (parsingContext, props) => {
+        const { node, context } = parsingContext;
+        
+        // Check if this node has x-unmount attribute
+        if (!node.hasAttribute || !node.hasAttribute('x-unmount')) return;
+        
+        const unmountExpr = node.getAttribute('x-unmount');
+        const handler = evaluateExpression(unmountExpr, context);
+        
+        if (typeof handler === 'function') {
+            props.onUnmount = handler;
+        }
+    }
+};
+
+export const xUpdateDirective = {
+    controlFlow: false,
+    handle: (parsingContext, props) => {
+        const { node, context } = parsingContext;
+        
+        // Check if this node has x-update attribute
+        if (!node.hasAttribute || !node.hasAttribute('x-update')) return;
+        
+        const updateExpr = node.getAttribute('x-update');
+        const handler = evaluateExpression(updateExpr, context);
+        
+        if (typeof handler === 'function') {
+            props.onUpdate = handler;
+        }
     }
 };
 
@@ -399,7 +502,10 @@ export const defaultDirective = {
                 attr.name !== 'x-target' &&
                 attr.name !== 'x-if' &&
                 attr.name !== 'x-else' &&
-                attr.name !== 'x-for'
+                attr.name !== 'x-for' &&
+                attr.name !== 'x-mount' &&
+                attr.name !== 'x-unmount' &&
+                attr.name !== 'x-update'
             ) {
                 props.attrs[attr.name] = attr.value;
             }
@@ -417,4 +523,7 @@ registerDirective('x-show', xShowDirective);
 registerDirective('x-model', xModelDirective);
 registerDirective('x-get', xFetchDirective);
 registerDirective('x-post', xFetchDirective);
+registerDirective('x-mount', xMountDirective);
+registerDirective('x-unmount', xUnmountDirective);
+registerDirective('x-update', xUpdateDirective);
 registerDirective('default', defaultDirective);

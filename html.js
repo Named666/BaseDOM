@@ -60,6 +60,43 @@ export const Element = (tag) => (optionsOrChildren, ...restChildren) => {
     return createComponent(tag, options);
 };
 
+/**
+ * Creates a component with lifecycle hooks
+ * @param {Function} componentFn - Function that returns component structure
+ * @param {Object} lifecycle - Object containing onMount, onUnmount, onUpdate functions
+ * @returns {Function} Component function with lifecycle hooks
+ */
+export const withLifecycleHooks = (componentFn, lifecycle = {}) => {
+    return (props) => {
+        const component = componentFn(props);
+        
+        // If component returns an element with lifecycle hooks, compose them
+        if (component instanceof HTMLElement) {
+            const { onMount, onUnmount, onUpdate } = lifecycle;
+            
+            if (onMount) {
+                const existingOnMount = component.__onMount;
+                component.__onMount = existingOnMount 
+                    ? (el) => { existingOnMount(el); onMount(el); }
+                    : onMount;
+            }
+            
+            if (onUnmount) {
+                const existingOnUnmount = component.__onUnmount;
+                component.__onUnmount = existingOnUnmount 
+                    ? () => { existingOnUnmount(); onUnmount(); }
+                    : onUnmount;
+            }
+            
+            if (onUpdate) {
+                component.__onUpdate = onUpdate;
+            }
+        }
+        
+        return component;
+    };
+};
+
 // Exporting common HTML elements as functions
 export const div = Element('div');
 export const p = Element('p');

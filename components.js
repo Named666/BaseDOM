@@ -315,8 +315,20 @@ export function createComponent(tag, options = {}) {
     effectsToCleanup.length = 0;
     if (onUnmount) onUnmount(); // Run user-defined onUnmount
   };
-  if (onMount) element.__onMount = onMount;
-  element.__onUnmount = onUnmountWrapper;
+  
+  // Compose onMount hooks if there are existing ones
+  if (onMount) {
+    const existingOnMount = element.__onMount;
+    element.__onMount = existingOnMount 
+      ? (el) => { existingOnMount(el); onMount(el); }
+      : onMount;
+  }
+  
+  // Compose onUnmount hooks if there are existing ones
+  const existingOnUnmount = element.__onUnmount;
+  element.__onUnmount = existingOnUnmount 
+    ? () => { onUnmountWrapper(); existingOnUnmount(); }
+    : onUnmountWrapper;
 
   return element;
 }

@@ -98,16 +98,23 @@ export async function parseComponent(htmlText) {
             }
             const context = cachedContext;
             
+            // Extract lifecycle hooks from context if they exist
+            const { onMount, onUnmount, onUpdate, ...otherContext } = context;
+            const lifecycleHooks = { onMount, onUnmount, onUpdate };
+            
             if (nodes.length === 1) {
-                // Single root node - apply styles to it
-                return parseNode(nodes[0], context, styles);
+                // Single root node - apply styles and lifecycle hooks to it
+                const element = parseNode(nodes[0], otherContext, styles);
+                return attachLifecycleHooks(element, lifecycleHooks);
             } else if (nodes.length > 1) {
-                // Multiple root nodes - wrap in a fragment with styles applied to wrapper
-                const children = nodes.map(n => parseNode(n, context)).filter(Boolean);
+                // Multiple root nodes - wrap in a fragment with styles and lifecycle hooks applied to wrapper
+                const children = nodes.map(n => parseNode(n, otherContext)).filter(Boolean);
                 const wrapperOptions = { children };
                 if (styles) {
                     wrapperOptions.styles = styles;
                 }
+                // Attach lifecycle hooks to the wrapper
+                Object.assign(wrapperOptions, lifecycleHooks);
                 return Element('div')(wrapperOptions);
             } else {
                 // No nodes found
@@ -115,6 +122,7 @@ export async function parseComponent(htmlText) {
                 if (styles) {
                     noContentOptions.styles = styles;
                 }
+                Object.assign(noContentOptions, lifecycleHooks);
                 return Element('div')(noContentOptions);
             }
         };
@@ -205,6 +213,49 @@ function preprocessNodes(nodes) {
     }
     
     return processedNodes;
+}
+
+// Helper function to attach lifecycle hooks to parsed elements
+function attachLifecycleHooks(element, lifecycleHooks) {
+    const { onMount, onUnmount, onUpdate } = lifecycleHooks;
+    
+    if (typeof element === 'function') {
+        // For reactive elements, we need to wrap them to add lifecycle support
+        return () => {
+            const renderedElement = element();
+            if (renderedElement instanceof HTMLElement) {
+                if (onMount && !renderedElement.__onMount) {
+                    renderedElement.__onMount = onMount;
+                }
+                if (onUnmount) {
+                    const existingUnmount = renderedElement.__onUnmount;
+                    renderedElement.__onUnmount = existingUnmount 
+                        ? () => { existingUnmount(); onUnmount(); }
+                        : onUnmount;
+                }
+                if (onUpdate && !renderedElement.__onUpdate) {
+                    renderedElement.__onUpdate = onUpdate;
+                }
+            }
+            return renderedElement;
+        };
+    } else if (element instanceof HTMLElement) {
+        // For static elements, attach directly
+        if (onMount && !element.__onMount) {
+            element.__onMount = onMount;
+        }
+        if (onUnmount) {
+            const existingUnmount = element.__onUnmount;
+            element.__onUnmount = existingUnmount 
+                ? () => { existingUnmount(); onUnmount(); }
+                : onUnmount;
+        }
+        if (onUpdate && !element.__onUpdate) {
+            element.__onUpdate = onUpdate;
+        }
+    }
+    
+    return element;
 }
 
 // Process directives on a node with a standardized interface
