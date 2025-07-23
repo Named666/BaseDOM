@@ -6,6 +6,31 @@ import { ExpressionParser, expressionParser, _reactive, evaluateExpression } fro
 
 // --- Core Parsing Logic ---
 
+// Development mode flag
+const DEV_MODE = !import.meta.env?.PROD && globalThis.location?.hostname === 'localhost';
+
+function devWarn(message, node) {
+    if (DEV_MODE) {
+        console.warn(`[BaseDOM]: ${message}`, node);
+    }
+}
+
+// Helper function to check if a node should be skipped (x-else pairing)
+function shouldSkipElseNode(node, parentNodes, currentIndex) {
+    if (!node.hasAttribute || !node.hasAttribute('x-else')) {
+        return false;
+    }
+    
+    // Look backwards for a paired x-if
+    for (let i = currentIndex - 1; i >= 0; i--) {
+        const prevNode = parentNodes[i];
+        if (prevNode.nodeType === Node.ELEMENT_NODE) {
+            return prevNode.hasAttribute && prevNode.hasAttribute('x-if');
+        }
+    }
+    return false;
+}
+
 /**
  * Parses an HTML string into a renderable component function.
  * @param {string} htmlText - The raw text of the .html file.
@@ -50,13 +75,14 @@ export async function parseComponent(htmlText) {
 
         // Cache component instances to prevent signal re-creation
         let cachedContext = null;
-        let lastProps = null;
+        let propsVersion = 0;
         
         return (props) => {
-            // Only recreate context if props actually changed or this is first run
-            if (!cachedContext || JSON.stringify(props) !== JSON.stringify(lastProps)) {
-                cachedContext = componentLogicFn(props || {});
-                lastProps = props;
+            // Simple versioning approach - only recreate if props reference changes
+            const currentProps = props || {};
+            if (!cachedContext || currentProps !== cachedContext.__lastProps) {
+                cachedContext = componentLogicFn(currentProps);
+                cachedContext.__lastProps = currentProps;
             }
             const context = cachedContext;
             
@@ -159,9 +185,102 @@ export function registerDirective(name, handler) {
     directiveRegistry.set(name, handler);
 }
 
+// Fetch directive for handling x-get, x-post, and related attributes
+function fetchDirective(node, context, props) {
+    // Collect fetch config from attributes
+    const fetchAttrs = [
+        'x-get', 'x-post', 'x-swap', 'x-select', 'x-trigger',
+        'x-push-url', 'x-replace-url', 'x-target'
+    ];
+    const fetchConfig = {};
+    let hasFetch = false;
+    for (const attr of fetchAttrs) {
+        if (node.hasAttribute(attr)) {
+            fetchConfig[attr] = node.getAttribute(attr);
+            props.attrs[attr] = node.getAttribute(attr);
+            hasFetch = true;
+        }
+    }
+    if (!hasFetch) return;
+
+    // Attach fetch handler after render
+    props.ref = (el) => {
+        if (!el) return;
+        const tagName = node.tagName.toLowerCase();
+        const method = fetchConfig['x-post'] ? 'POST' : 'GET';
+        const url = fetchConfig['x-get'] || fetchConfig['x-post'];
+        if (!url) return;
+
+        let trigger = fetchConfig['x-trigger'] || '';
+        if (!trigger) {
+            trigger = (tagName === 'form' && method === 'POST') ? 'submit' : 'click';
+        }
+
+        const handleEvent = async (evt) => {
+            if (tagName === 'form' && method === 'POST') {
+                evt.preventDefault();
+            }
+            try {
+                let fetchOpts = { method };
+                if (method === 'POST' && tagName === 'form') {
+                    fetchOpts.body = new FormData(el);
+                }
+                const resp = await fetch(url, fetchOpts);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+                let html = await resp.text();
+
+                // Handle content selection
+                if (fetchConfig['x-select']) {
+                    const temp = document.createElement('div');
+                    temp.innerHTML = html;
+                    const sel = temp.querySelector(fetchConfig['x-select']);
+                    if (sel) {
+                        const swapMode = (fetchConfig['x-swap'] || '').toLowerCase();
+                        html = swapMode === 'innerhtml' ? sel.innerHTML : sel.outerHTML;
+                    }
+                }
+
+                // Determine target element
+                let target = el;
+                if (fetchConfig['x-target']) {
+                    const targetEl = document.querySelector(fetchConfig['x-target']);
+                    if (targetEl) target = targetEl;
+                }
+
+                // Apply the swap strategy
+                const swap = (fetchConfig['x-swap'] || 'innerHTML').toLowerCase();
+                if (swap === 'outerhtml') {
+                    target.outerHTML = html;
+                } else if (swap === 'append' || swap === 'beforeend') {
+                    target.insertAdjacentHTML('beforeend', html);
+                } else if (swap === 'prepend' || swap === 'afterbegin') {
+                    target.insertAdjacentHTML('afterbegin', html);
+                } else if (swap === 'beforebegin') {
+                    target.insertAdjacentHTML('beforebegin', html);
+                } else if (swap === 'afterend') {
+                    target.insertAdjacentHTML('afterend', html);
+                } else {
+                    target.innerHTML = html;
+                }
+
+                // Handle URL updates
+                if (fetchConfig['x-push-url'] === 'true') {
+                    history.pushState({}, '', url);
+                } else if (fetchConfig['x-replace-url'] === 'true') {
+                    history.replaceState({}, '', url);
+                }
+            } catch (error) {
+                console.error('Fetch trigger error:', error);
+            }
+        };
+
+        el.addEventListener(trigger, handleEvent);
+    };
+}
+
 
 // Built-in directives registration
-registerDirective('x-if', (node, context, props, fetchConfig) => {
+registerDirective('x-if', (node, context, props) => {
     const ifDirective = node.getAttribute('x-if');
     if (ifDirective) {
         let elseNode = null;
@@ -182,7 +301,7 @@ registerDirective('x-if', (node, context, props, fetchConfig) => {
     return null;
 });
 
-registerDirective('x-for', (node, context, props, fetchConfig) => {
+registerDirective('x-for', (node, context, props) => {
     const forDirective = node.getAttribute('x-for');
     if (forDirective) return handleForDirective(node, forDirective, context);
     return null;
@@ -294,20 +413,9 @@ registerDirective('x-model', (node, context, props) => {
     }
 });
 
-// Register each fetch attribute as its own directive
-const fetchAttrs = [
-    'x-get', 'x-post', 'x-swap', 'x-select', 'x-trigger',
-    'x-push-url', 'x-replace-url', 'x-target'
-];
-
-fetchAttrs.forEach(attr => {
-    registerDirective(attr, (node, context, props, fetchConfig) => {
-        if (node.hasAttribute(attr)) {
-            fetchConfig[attr] = node.getAttribute(attr);
-            props.attrs[attr] = node.getAttribute(attr);
-        }
-    });
-});
+// Register fetch directives
+registerDirective('x-get', fetchDirective);
+registerDirective('x-post', fetchDirective);
 
 registerDirective('default', (node, context, props) => {
     for (const attr of node.attributes) {
@@ -316,7 +424,14 @@ registerDirective('default', (node, context, props) => {
             !attr.name.startsWith('x-bind:') &&
             attr.name !== 'x-show' &&
             attr.name !== 'x-model' &&
-            !fetchAttrs.includes(attr.name)
+            attr.name !== 'x-get' &&
+            attr.name !== 'x-post' &&
+            attr.name !== 'x-swap' &&
+            attr.name !== 'x-select' &&
+            attr.name !== 'x-trigger' &&
+            attr.name !== 'x-push-url' &&
+            attr.name !== 'x-replace-url' &&
+            attr.name !== 'x-target'
         ) {
             props.attrs[attr.name] = attr.value;
         }
@@ -339,7 +454,7 @@ function parseNode(node, context, componentStyles = null) {
     // Control flow directives (return early if handled)
     for (const key of ['x-if', 'x-for']) {
         if (node.hasAttribute(key) && directiveRegistry.has(key)) {
-            const result = directiveRegistry.get(key)(node, context, {}, {});
+            const result = directiveRegistry.get(key)(node, context, {});
             if (result !== null) return result;
         }
     }
@@ -347,144 +462,61 @@ function parseNode(node, context, componentStyles = null) {
     const tagName = node.tagName.toLowerCase();
     const props = { attrs: {} };
     const children = [];
-    const fetchConfig = {};
 
     // Add component styles to the root element if this is the first element being parsed
     if (componentStyles) {
         props.styles = componentStyles;
     }
 
-    // Attribute/event/fetch directives
-    for (const [name, handler] of directiveRegistry.entries()) {
-        if (name === 'x-if' || name === 'x-for' || name === 'default') continue;
-        handler(node, context, props, fetchConfig);
+    // Attribute/event/fetch directives - only call relevant handlers
+    const nodeAttributes = Array.from(node.attributes || []);
+    const relevantDirectives = new Set();
+    
+    // Pre-scan to find relevant directives
+    nodeAttributes.forEach(attr => {
+        if (directiveRegistry.has(attr.name)) {
+            relevantDirectives.add(attr.name);
+        }
+        // Check for prefixed directives
+        if (attr.name.startsWith('x-on:') && directiveRegistry.has('x-on')) {
+            relevantDirectives.add('x-on');
+        }
+        if (attr.name.startsWith('x-bind:') && directiveRegistry.has('x-bind')) {
+            relevantDirectives.add('x-bind');
+        }
+    });
+    
+    // Check for fetch directives
+    if (nodeAttributes.some(attr => ['x-get', 'x-post'].includes(attr.name))) {
+        relevantDirectives.add('x-get');
+        relevantDirectives.add('x-post');
     }
+    
+    // Only call relevant directive handlers
+    relevantDirectives.forEach(name => {
+        if (name !== 'x-if' && name !== 'x-for' && name !== 'default') {
+            directiveRegistry.get(name)?.(node, context, props);
+        }
+    });
+    
+    // Always call default directive for remaining attributes
     directiveRegistry.get('default')(node, context, props);
 
     // Process child nodes, skipping x-else that are paired with x-if
-    for (let i = 0; i < node.childNodes.length; i++) {
-        const child = node.childNodes[i];
+    const childNodes = Array.from(node.childNodes);
+    for (let i = 0; i < childNodes.length; i++) {
+        const child = childNodes[i];
         
-        // Skip x-else nodes that are paired with x-if
-        if (
-            child.nodeType === Node.ELEMENT_NODE &&
-            child.hasAttribute &&
-            child.hasAttribute('x-else')
-        ) {
-            // Look backwards for a x-if sibling
-            let foundPairedIf = false;
-            for (let j = i - 1; j >= 0; j--) {
-                const prevSibling = node.childNodes[j];
-                if (prevSibling.nodeType === Node.ELEMENT_NODE) {
-                    if (prevSibling.hasAttribute && prevSibling.hasAttribute('x-if')) {
-                        foundPairedIf = true;
-                    }
-                    break; // Stop at first element node
-                }
-            }
-            if (foundPairedIf) {
-                continue; // Skip this x-else
-            }
+        if (shouldSkipElseNode(child, childNodes, i)) {
+            continue;
         }
         
         const parsedChild = parseNode(child, context);
         if (parsedChild) children.push(parsedChild);
     }
 
-    function handleFetchTriggerBehavior(el) {
-        const method = fetchConfig['x-post'] ? 'POST' : 'GET';
-        const url = fetchConfig['x-get'] || fetchConfig['x-post'];
-        if (!url) return;
-        
-        let trigger = fetchConfig['x-trigger'] || '';
-        if (!trigger) {
-            trigger = (tagName === 'form' && method === 'POST') ? 'submit' : 'click';
-        }
-        
-        const handleEvent = async (evt) => {
-            if (tagName === 'form' && method === 'POST') {
-                evt.preventDefault();
-            }
-            
-            try {
-                let fetchOpts = { method };
-                if (method === 'POST' && tagName === 'form') {
-                    fetchOpts.body = new FormData(el);
-                }
-                
-                const resp = await fetch(url, fetchOpts);
-                if (!resp.ok) {
-                    throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
-                }
-                
-                let html = await resp.text();
-                
-                // Handle content selection
-                if (fetchConfig['x-select']) {
-                    const temp = document.createElement('div');
-                    temp.innerHTML = html;
-                    const sel = temp.querySelector(fetchConfig['x-select']);
-                    if (sel) {
-                        const swapMode = (fetchConfig['x-swap'] || '').toLowerCase();
-                        if (swapMode === 'innerhtml') {
-                            html = sel.innerHTML;
-                        } else {
-                            html = sel.outerHTML;
-                        }
-                    }
-                }
-                
-                // Determine target element
-                let target = el;
-                if (fetchConfig['x-target']) {
-                    const targetEl = document.querySelector(fetchConfig['x-target']);
-                    if (targetEl) target = targetEl;
-                }
-                
-                // Apply the swap strategy
-                const swap = (fetchConfig['x-swap'] || 'innerHTML').toLowerCase();
-                if (swap === 'outerhtml') {
-                    target.outerHTML = html;
-                } else if (swap === 'append' || swap === 'beforeend') {
-                    target.insertAdjacentHTML('beforeend', html);
-                } else if (swap === 'prepend' || swap === 'afterbegin') {
-                    target.insertAdjacentHTML('afterbegin', html);
-                } else if (swap === 'beforebegin') {
-                    target.insertAdjacentHTML('beforebegin', html);
-                } else if (swap === 'afterend') {
-                    target.insertAdjacentHTML('afterend', html);
-                } else {
-                    target.innerHTML = html;
-                }
-                
-                // Handle URL updates
-                if (fetchConfig['x-push-url'] === 'true') {
-                    history.pushState({}, '', url);
-                } else if (fetchConfig['x-replace-url'] === 'true') {
-                    history.replaceState({}, '', url);
-                }
-            } catch (error) {
-                console.error('Fetch trigger error:', error);
-                // Optionally show error to user
-            }
-        };
-        
-        el.addEventListener(trigger, handleEvent);
-    }
-
     const componentFactory = Element(tagName);
-    const baseComponent = componentFactory({ ...props, children });
-
-    if (Object.keys(fetchConfig).length > 0) {
-        return (el) => {
-            const result = typeof baseComponent === 'function' ? baseComponent(el) : baseComponent;
-            if (el && el.addEventListener) {
-                handleFetchTriggerBehavior(el);
-            }
-            return result;
-        };
-    }
-    return baseComponent;
+    return componentFactory({ ...props, children });
 }
 
 /**

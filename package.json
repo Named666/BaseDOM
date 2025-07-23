@@ -6,6 +6,7 @@
   "main": "index.js",
   "type": "module",
   "files": [
+    "expression.js",
     "parser.js",
     "index.js",
     "components.js",
