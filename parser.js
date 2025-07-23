@@ -2,29 +2,9 @@
 import { Element } from './html.js';
 import { signal, effect, computed } from './state.js';
 import { ExpressionParser, expressionParser, _reactive, evaluateExpression } from './expression.js';
-import { 
-    xIfDirective, 
-    xElseDirective,
-    xForDirective, 
-    xOnDirective, 
-    xBindDirective, 
-    xShowDirective, 
-    xModelDirective, 
-    xFetchDirective, 
-    defaultDirective 
-} from './directives.js';
 
 
 // --- Core Parsing Logic ---
-
-// Development mode flag
-const DEV_MODE = !import.meta.env?.PROD && globalThis.location?.hostname === 'localhost';
-
-function devWarn(message, node) {
-    if (DEV_MODE) {
-        console.warn(`[BaseDOM]: ${message}`, node);
-    }
-}
 
 /**
  * Parses text content for {{...}} interpolation.
@@ -203,10 +183,6 @@ function extractParts(htmlText) {
     return { template, script, styles };
 }
 
-// --- Node Parsing and Directive Handling ---
-
-
-
 
 // --- Modular Directive Registry ---
 
@@ -257,21 +233,10 @@ function processDirectives(node, context, parsingContext) {
     return props;
 }
 
-// Register built-in directives
-registerDirective('x-if', xIfDirective);
-registerDirective('x-else', xElseDirective);
-registerDirective('x-for', xForDirective);
-registerDirective('x-on', xOnDirective);
-registerDirective('x-bind', xBindDirective);
-registerDirective('x-show', xShowDirective);
-registerDirective('x-model', xModelDirective);
-registerDirective('x-get', xFetchDirective);
-registerDirective('x-post', xFetchDirective);
-registerDirective('default', defaultDirective);
 
-// --- Unified Node Parsing ---
+// --- Node Parsing ---
 
-function parseNode(node, context, componentStyles = null) {
+export function parseNode(node, context, componentStyles = null) {
     if (node.nodeType === Node.TEXT_NODE) {
         return parseTextNode(node.textContent, context);
     }

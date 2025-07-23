@@ -10,6 +10,8 @@ window.effect = state.effect;
 import { initialize } from './render.js';
 import { startRouter } from './router.js';
 import { renderRoute } from './render.js';
+// Import and register directives
+import './directives.js';
 import { attachLinkInterception } from './navigation.js';
 
 export function startApp(rootSelector = '#app') {

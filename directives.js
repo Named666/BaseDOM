@@ -1,6 +1,7 @@
 // directives.js
 import { computed } from './state.js';
 import { evaluateExpression, _reactive } from './expression.js';
+import { parseNode, registerDirective } from './parser.js';
 
 /**
  * Directive Interface:
@@ -405,3 +406,15 @@ export const defaultDirective = {
         }
     }
 };
+
+// Register built-in directives
+registerDirective('x-if', xIfDirective);
+registerDirective('x-else', xElseDirective);
+registerDirective('x-for', xForDirective);
+registerDirective('x-on', xOnDirective);
+registerDirective('x-bind', xBindDirective);
+registerDirective('x-show', xShowDirective);
+registerDirective('x-model', xModelDirective);
+registerDirective('x-get', xFetchDirective);
+registerDirective('x-post', xFetchDirective);
+registerDirective('default', defaultDirective);
