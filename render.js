@@ -72,8 +72,6 @@ export function initialize(rootElementSelector = '#app') {
         renderComponent(App, rootElement);
     } else {
         console.warn(`Root element "${rootElementSelector}" not found. App will not render until it is available.`);
-        // Retry initialization when the DOM is fully loaded
-        document.addEventListener('DOMContentLoaded', () => initialize(rootElementSelector), { once: true });
     }
 }
 

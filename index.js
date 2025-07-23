@@ -6,12 +6,24 @@ window.computed = state.computed;
 window.effect = state.effect;
 // Add any other exports you need globally
 
+
 import { initialize } from './render.js';
 import { startRouter } from './router.js';
+import { renderRoute } from './render.js';
+import { attachLinkInterception } from './navigation.js';
 
 export function startApp(rootSelector = '#app') {
-    initialize(rootSelector);
-    startRouter();
+    function doStart() {
+        initialize(rootSelector);
+        startRouter();
+        renderRoute(location.pathname + location.search);
+        attachLinkInterception();
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', doStart, { once: true });
+    } else {
+        doStart();
+    }
 }
 
 // re-export anything else you need…

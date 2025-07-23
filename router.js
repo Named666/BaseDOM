@@ -198,8 +198,5 @@ export function findMatchingRoute(path) {
 
 export function startRouter() {
     window.addEventListener("popstate", () => renderRoute(location.pathname + location.search));
-    document.addEventListener("DOMContentLoaded", () => {
-        renderRoute(location.pathname + location.search);
-        attachLinkInterception();
-    });
+    // Initial render and attachLinkInterception are now handled in startApp for unified startup
 }

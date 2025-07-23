@@ -46,8 +46,17 @@ export async function parseComponent(htmlText) {
             return true;
         });
 
+        // Cache component instances to prevent signal re-creation
+        let cachedContext = null;
+        let lastProps = null;
+        
         return (props) => {
-            const context = componentLogicFn(props || {});
+            // Only recreate context if props actually changed or this is first run
+            if (!cachedContext || JSON.stringify(props) !== JSON.stringify(lastProps)) {
+                cachedContext = componentLogicFn(props || {});
+                lastProps = props;
+            }
+            const context = cachedContext;
             
             if (nodes.length === 1) {
                 // Single root node - apply styles to it
@@ -554,13 +563,13 @@ function parseTextNode(text, context) {
     const match = text.trim().match(/^\{\{(.*)\}\}$/);
 
     // If the text is *only* an interpolation, e.g. "{{ children }}"
-    // we can return the raw value, which might be an element or a function
     if (match) {
         const expr = match[1].trim();
         return () => {
-            const contextValue = context[expr];
-            if (typeof contextValue === 'function') {
-                return contextValue();
+            let contextValue = context[expr];
+            // --- PATCH: If contextValue is a function/component, call it until it's not a function ---
+            while (typeof contextValue === 'function') {
+                contextValue = contextValue();
             }
             return contextValue;
         };

@@ -131,11 +131,30 @@ export function effect(fn) {
  * @returns {Function} A getter function for the computed value.
  */
 export function computed(fn) {
-    const [value, setValue] = signal(fn());
-    effect(() => setValue(fn()));
-
-    // Return only the getter to make it read-only.
-    return value;
+    let value;
+    let hasValue = false;
+    const [getValue, setValue] = signal(undefined);
+    
+    // Use effect to track dependencies and update the value
+    const dispose = effect(() => {
+        const newValue = fn();
+        if (!hasValue || !Object.is(value, newValue)) {
+            value = newValue;
+            hasValue = true;
+            setValue(newValue);
+        }
+    });
+    
+    // Return a getter that returns the current computed value
+    const getter = () => {
+        getValue(); // This registers dependency on the computed signal
+        return value;
+    };
+    
+    // Attach dispose method for cleanup
+    getter.dispose = dispose;
+    
+    return getter;
 }
 
 /**
