@@ -2,6 +2,16 @@
 import { Element } from './html.js';
 import { signal, effect, computed } from './state.js';
 import { ExpressionParser, expressionParser, _reactive, evaluateExpression } from './expression.js';
+import { 
+    xIfDirective, 
+    xForDirective, 
+    xOnDirective, 
+    xBindDirective, 
+    xShowDirective, 
+    xModelDirective, 
+    xFetchDirective, 
+    defaultDirective 
+} from './directives.js';
 
 
 // --- Core Parsing Logic ---
@@ -15,20 +25,55 @@ function devWarn(message, node) {
     }
 }
 
-// Helper function to check if a node should be skipped (x-else pairing)
-function shouldSkipElseNode(node, parentNodes, currentIndex) {
-    if (!node.hasAttribute || !node.hasAttribute('x-else')) {
-        return false;
+/**
+ * Parses text content for {{...}} interpolation.
+ * @param {string} text - The text content.
+ * @param {object} context - The component's context.
+ * @returns {Function|string} A computed signal if interpolation is found, otherwise the static text.
+ */
+function parseTextNode(text, context) {
+    if (!text.includes('{{')) {
+        return text;
     }
-    
-    // Look backwards for a paired x-if
-    for (let i = currentIndex - 1; i >= 0; i--) {
-        const prevNode = parentNodes[i];
-        if (prevNode.nodeType === Node.ELEMENT_NODE) {
-            return prevNode.hasAttribute && prevNode.hasAttribute('x-if');
+    const regex = /\{\{(.*?)\}\}/g;
+    const match = text.trim().match(/^\{\{(.*)\}\}$/);
+
+    // If the text is *only* an interpolation, e.g. "{{ user.name || 'Anonymous' }}"
+    if (match) {
+        const expr = match[1].trim();
+        return () => {
+            const result = evaluateExpression(expr, context);
+            // Handle reactive values
+            return _reactive(result);
+        };
+    }
+
+    // Otherwise, handle mixed text and interpolations
+    const parts = [];
+    let lastIndex = 0;
+    let m;
+    while ((m = regex.exec(text)) !== null) {
+        if (m.index > lastIndex) {
+            parts.push(text.slice(lastIndex, m.index));
         }
+        const expr = m[1].trim();
+        parts.push(() => {
+            const value = evaluateExpression(expr, context);
+            const reactiveValue = _reactive(value);
+            
+            // Avoid rendering objects as strings in mixed content
+            if (reactiveValue instanceof HTMLElement || reactiveValue instanceof DocumentFragment) {
+                console.warn(`Cannot render HTML element inside mixed text content for expression: {{${expr}}}. Returning empty string.`);
+                return '';
+            }
+            return reactiveValue !== undefined ? reactiveValue : `{{${expr}}}`;
+        });
+        lastIndex = regex.lastIndex;
     }
-    return false;
+    if (lastIndex < text.length) {
+        parts.push(text.slice(lastIndex));
+    }
+    return computed(() => parts.map(part => typeof part === 'function' ? part() : part).join(''));
 }
 
 /**
@@ -180,263 +225,72 @@ function extractParts(htmlText) {
 
 const directiveRegistry = new Map();
 
-// Register a directive handler
+// Register a directive handler with type information
 export function registerDirective(name, handler) {
     directiveRegistry.set(name, handler);
 }
 
-// Fetch directive for handling x-get, x-post, and related attributes
-function fetchDirective(node, context, props) {
-    // Collect fetch config from attributes
-    const fetchAttrs = [
-        'x-get', 'x-post', 'x-swap', 'x-select', 'x-trigger',
-        'x-push-url', 'x-replace-url', 'x-target'
-    ];
-    const fetchConfig = {};
-    let hasFetch = false;
-    for (const attr of fetchAttrs) {
-        if (node.hasAttribute(attr)) {
-            fetchConfig[attr] = node.getAttribute(attr);
-            props.attrs[attr] = node.getAttribute(attr);
-            hasFetch = true;
+// Process directives on a node with a standardized interface
+function processDirectives(node, context, parsingContext) {
+    // Control flow directives get first priority and can return early
+    for (const [name, directive] of directiveRegistry) {
+        if (directive.controlFlow && node.hasAttribute && node.hasAttribute(name)) {
+            const result = directive.handle({ node, context, ...parsingContext });
+            if (result !== null) return result;
         }
     }
-    if (!hasFetch) return;
 
-    // Attach fetch handler after render
-    props.ref = (el) => {
-        if (!el) return;
-        const tagName = node.tagName.toLowerCase();
-        const method = fetchConfig['x-post'] ? 'POST' : 'GET';
-        const url = fetchConfig['x-get'] || fetchConfig['x-post'];
-        if (!url) return;
-
-        let trigger = fetchConfig['x-trigger'] || '';
-        if (!trigger) {
-            trigger = (tagName === 'form' && method === 'POST') ? 'submit' : 'click';
+    // If no control flow directive handled the node, process attribute directives
+    const props = { attrs: {} };
+    
+    // Pre-scan to find relevant attribute directives
+    const nodeAttributes = Array.from(node.attributes || []);
+    const relevantDirectives = new Set();
+    
+    nodeAttributes.forEach(attr => {
+        // Direct matches
+        if (directiveRegistry.has(attr.name)) {
+            const directive = directiveRegistry.get(attr.name);
+            if (!directive.controlFlow) {
+                relevantDirectives.add(attr.name);
+            }
         }
-
-        const handleEvent = async (evt) => {
-            if (tagName === 'form' && method === 'POST') {
-                evt.preventDefault();
+        
+        // Check for prefixed directives
+        for (const [name, directive] of directiveRegistry) {
+            if (!directive.controlFlow && attr.name.startsWith(name + ':')) {
+                relevantDirectives.add(name);
             }
-            try {
-                let fetchOpts = { method };
-                if (method === 'POST' && tagName === 'form') {
-                    fetchOpts.body = new FormData(el);
-                }
-                const resp = await fetch(url, fetchOpts);
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
-                let html = await resp.text();
-
-                // Handle content selection
-                if (fetchConfig['x-select']) {
-                    const temp = document.createElement('div');
-                    temp.innerHTML = html;
-                    const sel = temp.querySelector(fetchConfig['x-select']);
-                    if (sel) {
-                        const swapMode = (fetchConfig['x-swap'] || '').toLowerCase();
-                        html = swapMode === 'innerhtml' ? sel.innerHTML : sel.outerHTML;
-                    }
-                }
-
-                // Determine target element
-                let target = el;
-                if (fetchConfig['x-target']) {
-                    const targetEl = document.querySelector(fetchConfig['x-target']);
-                    if (targetEl) target = targetEl;
-                }
-
-                // Apply the swap strategy
-                const swap = (fetchConfig['x-swap'] || 'innerHTML').toLowerCase();
-                if (swap === 'outerhtml') {
-                    target.outerHTML = html;
-                } else if (swap === 'append' || swap === 'beforeend') {
-                    target.insertAdjacentHTML('beforeend', html);
-                } else if (swap === 'prepend' || swap === 'afterbegin') {
-                    target.insertAdjacentHTML('afterbegin', html);
-                } else if (swap === 'beforebegin') {
-                    target.insertAdjacentHTML('beforebegin', html);
-                } else if (swap === 'afterend') {
-                    target.insertAdjacentHTML('afterend', html);
-                } else {
-                    target.innerHTML = html;
-                }
-
-                // Handle URL updates
-                if (fetchConfig['x-push-url'] === 'true') {
-                    history.pushState({}, '', url);
-                } else if (fetchConfig['x-replace-url'] === 'true') {
-                    history.replaceState({}, '', url);
-                }
-            } catch (error) {
-                console.error('Fetch trigger error:', error);
-            }
-        };
-
-        el.addEventListener(trigger, handleEvent);
-    };
+        }
+    });
+    
+    // Process all relevant attribute directives
+    relevantDirectives.forEach(name => {
+        const directive = directiveRegistry.get(name);
+        if (directive && !directive.controlFlow) {
+            directive.handle({ node, context, ...parsingContext }, props);
+        }
+    });
+    
+    // Always process default directive for remaining attributes
+    const defaultDirective = directiveRegistry.get('default');
+    if (defaultDirective) {
+        defaultDirective.handle({ node, context, ...parsingContext }, props);
+    }
+    
+    return props;
 }
 
-
-// Built-in directives registration
-registerDirective('x-if', (node, context, props) => {
-    const ifDirective = node.getAttribute('x-if');
-    if (ifDirective) {
-        let elseNode = null;
-        // Find the corresponding x-else node by traversing siblings
-        let sibling = node.nextSibling;
-        while (sibling) {
-            if (sibling.nodeType === Node.ELEMENT_NODE && sibling.hasAttribute('x-else')) {
-                elseNode = sibling;
-                break;
-            } else if (sibling.nodeType === Node.ELEMENT_NODE) {
-                // Found another element that's not x-else, stop looking
-                break;
-            }
-            sibling = sibling.nextSibling;
-        }
-        return handleIfElseDirective(node, ifDirective, elseNode, context);
-    }
-    return null;
-});
-
-registerDirective('x-for', (node, context, props) => {
-    const forDirective = node.getAttribute('x-for');
-    if (forDirective) return handleForDirective(node, forDirective, context);
-    return null;
-});
-
-registerDirective('x-on', (node, context, props) => {
-    for (const attr of node.attributes) {
-        if (attr.name.startsWith('x-on:')) {
-            const eventName = attr.name.substring(5);
-            const handlerExpr = attr.value;
-            // Support both function references and function calls
-            props[`on${eventName.charAt(0).toUpperCase() + eventName.slice(1)}`] = (event) => {
-                // Add event and common event properties to context
-                const eventContext = {
-                    ...context,
-                    $event: event,
-                    $target: event.target,
-                    $currentTarget: event.currentTarget
-                };
-                // Check if it's a simple function reference or a call expression
-                if (handlerExpr.includes('(')) {
-                    // Function call expression like "toggle(item)" or "handleClick($event)"
-                    evaluateExpression(handlerExpr, eventContext);
-                } else {
-                    // Simple function reference like "toggle"
-                    const handler = evaluateExpression(handlerExpr, eventContext);
-                    if (typeof handler === 'function') {
-                        handler(event);
-                    }
-                }
-            };
-        }
-    }
-});
-
-registerDirective('x-bind', (node, context, props) => {
-    for (const attr of node.attributes) {
-        if (attr.name.startsWith('x-bind:')) {
-            const propName = attr.name.substring(7);
-            const expr = attr.value;
-            props[propName] = computed(() => {
-                return evaluateExpression(expr, context);
-            });
-        }
-    }
-});
-
-registerDirective('x-show', (node, context, props) => {
-    for (const attr of node.attributes) {
-        if (attr.name === 'x-show') {
-            const showExpr = attr.value;
-            if (!props.style) props.style = {};
-            props.style.display = computed(() => {
-                const shouldShow = evaluateExpression(showExpr, context);
-                return shouldShow ? '' : 'none';
-            });
-        }
-    }
-});
-
-registerDirective('x-model', (node, context, props) => {
-    for (const attr of node.attributes) {
-        if (attr.name === 'x-model') {
-            const modelExpr = attr.value.trim();
-            // Find the signal in context
-            const signal = context[modelExpr];
-            if (signal && typeof signal === 'function') {
-                // Two-way binding for input elements
-                const tagName = node.tagName.toLowerCase();
-                if (tagName === 'input' || tagName === 'textarea') {
-                    // Set initial value
-                    props.attrs.value = computed(() => signal());
-                    // Handle input events for two-way binding
-                    const inputHandler = (event) => {
-                        const newValue = event.target.value;
-                        // Assuming signals have a setter when called with a value
-                        if (signal.set) {
-                            signal.set(newValue);
-                        } else {
-                            // Try to call as setter
-                            signal(newValue);
-                        }
-                    };
-                    props.onInput = inputHandler;
-                    props.onChange = inputHandler;
-                } else if (tagName === 'select') {
-                    props.attrs.value = computed(() => signal());
-                    props.onChange = (event) => {
-                        const newValue = event.target.value;
-                        if (signal.set) {
-                            signal.set(newValue);
-                        } else {
-                            signal(newValue);
-                        }
-                    };
-                } else if (node.getAttribute('type') === 'checkbox') {
-                    props.attrs.checked = computed(() => signal());
-                    props.onChange = (event) => {
-                        const newValue = event.target.checked;
-                        if (signal.set) {
-                            signal.set(newValue);
-                        } else {
-                            signal(newValue);
-                        }
-                    };
-                }
-            }
-        }
-    }
-});
-
-// Register fetch directives
-registerDirective('x-get', fetchDirective);
-registerDirective('x-post', fetchDirective);
-
-registerDirective('default', (node, context, props) => {
-    for (const attr of node.attributes) {
-        if (
-            !attr.name.startsWith('x-on:') &&
-            !attr.name.startsWith('x-bind:') &&
-            attr.name !== 'x-show' &&
-            attr.name !== 'x-model' &&
-            attr.name !== 'x-get' &&
-            attr.name !== 'x-post' &&
-            attr.name !== 'x-swap' &&
-            attr.name !== 'x-select' &&
-            attr.name !== 'x-trigger' &&
-            attr.name !== 'x-push-url' &&
-            attr.name !== 'x-replace-url' &&
-            attr.name !== 'x-target'
-        ) {
-            props.attrs[attr.name] = attr.value;
-        }
-    }
-});
+// Register built-in directives
+registerDirective('x-if', xIfDirective);
+registerDirective('x-for', xForDirective);
+registerDirective('x-on', xOnDirective);
+registerDirective('x-bind', xBindDirective);
+registerDirective('x-show', xShowDirective);
+registerDirective('x-model', xModelDirective);
+registerDirective('x-get', xFetchDirective);
+registerDirective('x-post', xFetchDirective);
+registerDirective('default', defaultDirective);
 
 // --- Unified Node Parsing ---
 
@@ -446,202 +300,37 @@ function parseNode(node, context, componentStyles = null) {
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return null;
     
-    // Skip x-else nodes - they should only be processed by their x-if
-    if (node.hasAttribute && node.hasAttribute('x-else')) {
-        return null;
+    // Create parsing context that directives can use
+    const parsingContext = {
+        parseNode: (n, ctx) => parseNode(n, ctx || context),
+        componentStyles
+    };
+    
+    // Process directives - they handle control flow and attribute processing
+    const directiveResult = processDirectives(node, context, parsingContext);
+    
+    // If a control flow directive handled the node, return its result
+    if (directiveResult && typeof directiveResult === 'function') {
+        return directiveResult;
     }
-
-    // Control flow directives (return early if handled)
-    for (const key of ['x-if', 'x-for']) {
-        if (node.hasAttribute(key) && directiveRegistry.has(key)) {
-            const result = directiveRegistry.get(key)(node, context, {});
-            if (result !== null) return result;
-        }
-    }
-
-    const tagName = node.tagName.toLowerCase();
-    const props = { attrs: {} };
+    
+    // Otherwise, build a regular element using the props from attribute directives
+    const props = directiveResult || { attrs: {} };
     const children = [];
+    const tagName = node.tagName.toLowerCase();
 
     // Add component styles to the root element if this is the first element being parsed
     if (componentStyles) {
         props.styles = componentStyles;
     }
 
-    // Attribute/event/fetch directives - only call relevant handlers
-    const nodeAttributes = Array.from(node.attributes || []);
-    const relevantDirectives = new Set();
-    
-    // Pre-scan to find relevant directives
-    nodeAttributes.forEach(attr => {
-        if (directiveRegistry.has(attr.name)) {
-            relevantDirectives.add(attr.name);
-        }
-        // Check for prefixed directives
-        if (attr.name.startsWith('x-on:') && directiveRegistry.has('x-on')) {
-            relevantDirectives.add('x-on');
-        }
-        if (attr.name.startsWith('x-bind:') && directiveRegistry.has('x-bind')) {
-            relevantDirectives.add('x-bind');
-        }
-    });
-    
-    // Check for fetch directives
-    if (nodeAttributes.some(attr => ['x-get', 'x-post'].includes(attr.name))) {
-        relevantDirectives.add('x-get');
-        relevantDirectives.add('x-post');
-    }
-    
-    // Only call relevant directive handlers
-    relevantDirectives.forEach(name => {
-        if (name !== 'x-if' && name !== 'x-for' && name !== 'default') {
-            directiveRegistry.get(name)?.(node, context, props);
-        }
-    });
-    
-    // Always call default directive for remaining attributes
-    directiveRegistry.get('default')(node, context, props);
-
-    // Process child nodes, skipping x-else that are paired with x-if
+    // Process child nodes
     const childNodes = Array.from(node.childNodes);
-    for (let i = 0; i < childNodes.length; i++) {
-        const child = childNodes[i];
-        
-        if (shouldSkipElseNode(child, childNodes, i)) {
-            continue;
-        }
-        
+    for (const child of childNodes) {
         const parsedChild = parseNode(child, context);
         if (parsedChild) children.push(parsedChild);
     }
 
     const componentFactory = Element(tagName);
     return componentFactory({ ...props, children });
-}
-
-/**
- * Handles the `x-if` and `x-else` directives for conditional rendering.
- * @param {Node} ifNode - The node with the x-if attribute.
- * @param {string} condition - The condition to evaluate from the context.
- * @param {Node|null} elseNode - The node with the x-else attribute (if present).
- * @param {object} context - The component's context.
- * @returns {Function} A function that returns the if or else component or null.
- */
-function handleIfElseDirective(ifNode, condition, elseNode, context) {
-    ifNode.removeAttribute('x-if');
-    if (elseNode) elseNode.removeAttribute('x-else');
-
-    return computed(() => {
-        const shouldShow = evaluateExpression(condition, context);
-        
-        if (shouldShow) {
-            return parseNode(ifNode, context);
-        } else if (elseNode) {
-            return parseNode(elseNode, context);
-        }
-        return null;
-    });
-}
-
-/**
- * Parses text content for {{...}} interpolation.
- * @param {string} text - The text content.
- * @param {object} context - The component's context.
- * @returns {Function|string} A computed signal if interpolation is found, otherwise the static text.
- */
-function parseTextNode(text, context) {
-    if (!text.includes('{{')) {
-        return text;
-    }
-    const regex = /\{\{(.*?)\}\}/g;
-    const match = text.trim().match(/^\{\{(.*)\}\}$/);
-
-    // If the text is *only* an interpolation, e.g. "{{ user.name || 'Anonymous' }}"
-    if (match) {
-        const expr = match[1].trim();
-        return () => {
-            const result = evaluateExpression(expr, context);
-            // Handle reactive values
-            return _reactive(result);
-        };
-    }
-
-    // Otherwise, handle mixed text and interpolations
-    const parts = [];
-    let lastIndex = 0;
-    let m;
-    while ((m = regex.exec(text)) !== null) {
-        if (m.index > lastIndex) {
-            parts.push(text.slice(lastIndex, m.index));
-        }
-        const expr = m[1].trim();
-        parts.push(() => {
-            const value = evaluateExpression(expr, context);
-            const reactiveValue = _reactive(value);
-            
-            // Avoid rendering objects as strings in mixed content
-            if (reactiveValue instanceof HTMLElement || reactiveValue instanceof DocumentFragment) {
-                console.warn(`Cannot render HTML element inside mixed text content for expression: {{${expr}}}. Returning empty string.`);
-                return '';
-            }
-            return reactiveValue !== undefined ? reactiveValue : `{{${expr}}}`;
-        });
-        lastIndex = regex.lastIndex;
-    }
-    if (lastIndex < text.length) {
-        parts.push(text.slice(lastIndex));
-    }
-    return computed(() => parts.map(part => typeof part === 'function' ? part() : part).join(''));
-}
-
-// --- Directive Implementations ---
-
-
-
-/**
- * Handles the `x-for` directive for list rendering.
- * @param {Node} node - The node with the x-for attribute.
- * @param {string} expression - The "item in items" expression.
- * @param {object} context - The component's context.
- * @returns {Function} A function that returns an array of components.
- */
-function handleForDirective(node, expression, context) {
-    node.removeAttribute('x-for'); // Avoid reprocessing
-    
-    // Parse the for expression - support "item in items" and "item, index in items"
-    const forMatch = expression.match(/^(\w+)(?:\s*,\s*(\w+))?\s+in\s+(.+)$/);
-    if (!forMatch) {
-        console.warn(`Invalid x-for expression: ${expression}`);
-        return () => [];
-    }
-    
-    const [, itemName, indexName, listExpr] = forMatch;
-    
-    // Return a function that reactively returns the list of components
-    return computed(() => {
-        const items = evaluateExpression(listExpr.trim(), context);
-        let itemsArray = _reactive(items);
-        
-        if (!Array.isArray(itemsArray)) {
-            return [];
-        }
-
-        return itemsArray.map((item, index) => {
-            // For each item, create a new context that includes the loop variables
-            const loopContext = {
-                ...context,
-                [itemName]: () => item, // Make the item available as a "signal"
-            };
-            
-            // Add index if specified
-            if (indexName) {
-                loopContext[indexName] = () => index;
-            } else {
-                // Default index name
-                loopContext[`${itemName}Index`] = () => index;
-            }
-            
-            return parseNode(node.cloneNode(true), loopContext);
-        });
-    });
 }
