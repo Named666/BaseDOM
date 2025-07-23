@@ -22,6 +22,7 @@ const injectedStyles = new Set();
  * @param {Array|string} [options.children=[]] - Child elements or text content.
  * @param {function} [options.onMount] - Lifecycle hook for when the component is mounted.
  * @param {function} [options.onUnmount] - Lifecycle hook for when the component is unmounted.
+ * @param {function} [options.onUpdate] - Lifecycle hook for when the component should update (call triggerUpdate to invoke).
  * @param {function} [options.onSubmit]   – Form submit handler (preventDefault applied).
  * @returns {HTMLElement} The HTML element representation of the component.
  */
@@ -36,6 +37,7 @@ export function createComponent(tag, options = {}) {
     styles = "",
     onMount,
     onUnmount,
+    onUpdate,
     onSubmit
   } = processedOptions;
 
@@ -294,8 +296,7 @@ export function createComponent(tag, options = {}) {
         // For simplicity, attaching to each top-level node created by the raw html.
         if (child.__onMount) node.__onMount = child.__onMount;
         if (child.__onUnmount) node.__onUnmount = child.__onUnmount;
-        // __onUpdate is trickier as it implies watching changes *within* this raw HTML,
-        // which contradicts its "raw" nature for this setup.
+        if (child.__onUpdate) node.__onUpdate = child.__onUpdate;
       });
 
     } else {
@@ -329,6 +330,14 @@ export function createComponent(tag, options = {}) {
   element.__onUnmount = existingOnUnmount 
     ? () => { onUnmountWrapper(); existingOnUnmount(); }
     : onUnmountWrapper;
+
+  // Compose onUpdate hooks if there are existing ones
+  if (onUpdate) {
+    const existingOnUpdate = element.__onUpdate;
+    element.__onUpdate = existingOnUpdate 
+      ? (el) => { existingOnUpdate(el); onUpdate(el); }
+      : onUpdate;
+  }
 
   return element;
 }
@@ -392,4 +401,21 @@ export function withLifecycle(html, { onMount, onUnmount, onUpdate } = {}) {
     __onUnmount: onUnmount,
     __onUpdate: onUpdate
   };
+}
+
+// Helper to trigger onUpdate lifecycle hook on an element and its descendants
+export function triggerUpdate(element) {
+  const callOnUpdateRecursive = (node) => {
+    if (node.__onUpdate && typeof node.__onUpdate === 'function') {
+      try {
+        node.__onUpdate(node);
+      } catch (e) {
+        console.error('onUpdate lifecycle hook failed', e);
+      }
+    }
+    if (node.children) {
+      Array.from(node.children).forEach(callOnUpdateRecursive);
+    }
+  };
+  callOnUpdateRecursive(element);
 }

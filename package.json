@@ -1,7 +1,7 @@
 {
   "name": "basedom",
   "author": "named666",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "BaseDOM is a lightweight and reactive JavaScript library for building modern user interfaces with fine-grained reactivity.",
   "main": "index.js",
   "type": "module",
