@@ -1,4 +1,5 @@
 import * as state from './state.js';
+import { createStore } from './store.js';
 
 // Expose signals and helpers globally
 window.signal = state.signal;

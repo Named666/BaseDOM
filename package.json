@@ -18,6 +18,7 @@
     "render.js",
     "router.js",
     "state.js",
+    "store.js",
     "validation.js"
   ],
   "exports": {
