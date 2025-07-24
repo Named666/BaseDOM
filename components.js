@@ -76,12 +76,14 @@ export function createComponent(tag, options = {}) {
   // Helper to apply attributes reactively
   const applyAttribute = (el, key, value) => {
     if (key.startsWith('on') && typeof value === 'function') {
-      const eventName = key.toLowerCase().substring(2);
+      // Normalize event name: onInput -> input, onPointerDown -> pointerdown
+      let eventName = key.slice(2).toLowerCase();
       // Remove any previous handler before adding the new one
       const handlerProp = `__${eventName}_handler`;
       if (el[handlerProp]) {
         el.removeEventListener(eventName, el[handlerProp]);
       }
+      console.log(`[createComponent] Attaching event handler:`, { eventName, element: el, handler: value });
       el.addEventListener(eventName, value);
       el[handlerProp] = value;
     } else if (key === 'class' && typeof value === 'object') {

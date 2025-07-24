@@ -158,34 +158,30 @@ export const xOnDirective = {
     controlFlow: false,
     handle: (parsingContext, props) => {
         const { node, context } = parsingContext;
-        // Check if this node has any x-on: attributes
         if (!node.attributes) return;
         for (const attr of node.attributes) {
             if (attr.name.startsWith('x-on:')) {
-                let eventName = attr.name.substring(5);
+                let eventName = attr.name.substring(5).toLowerCase();
                 // Map aliases for convenience
                 if (eventName === 'hover' || eventName === 'enter') eventName = 'mouseenter';
                 if (eventName === 'leave') eventName = 'mouseleave';
                 const handlerExpr = attr.value;
-                props[`on${eventName.charAt(0).toUpperCase() + eventName.slice(1)}`] = (event) => {
-                    // Add event and common event properties to context
+
+                // Always attach using normalized event name (lowercase)
+                let propEventName = `on${eventName}`;
+                props[propEventName] = (event) => {
                     const eventContext = {
                         ...context,
                         $event: event,
                         $target: event.target,
                         $currentTarget: event.currentTarget
                     };
-                    // Check if it's a simple function reference or a call expression
-                    if (handlerExpr.includes('(')) {
-                        // Function call expression like "toggle(item)" or "handleClick($event)"
-                        evaluateExpression(handlerExpr, eventContext);
-                    } else {
-                        // Simple function reference like "toggle"
-                        const handler = evaluateExpression(handlerExpr, eventContext);
-                        if (typeof handler === 'function') {
-                            handler(event);
-                        }
+                    // Always evaluate the handler expression on every event
+                    const result = evaluateExpression(handlerExpr, eventContext);
+                    if (typeof result === 'function') {
+                        result(event);
                     }
+                    // If result is not a function, just evaluate (for side effects like console.log)
                 };
             }
         }
@@ -233,53 +229,51 @@ export const xModelDirective = {
     controlFlow: false,
     handle: (parsingContext, props) => {
         const { node, context } = parsingContext;
-        
-        // Check if this node has x-model attribute
         if (!node.hasAttribute || !node.hasAttribute('x-model')) return;
-        
+
         const modelExpr = node.getAttribute('x-model').trim();
-        // Find the signal in context
-        const signal = context[modelExpr];
-        if (signal && typeof signal === 'function') {
-            // Two-way binding for input elements
-            const tagName = node.tagName.toLowerCase();
-            if (tagName === 'input' || tagName === 'textarea') {
-                // Set initial value
-                props.attrs.value = computed(() => signal());
-                // Handle input events for two-way binding
-                const inputHandler = (event) => {
-                    const newValue = event.target.value;
-                    // Assuming signals have a setter when called with a value
-                    if (signal.set) {
-                        signal.set(newValue);
-                    } else {
-                        // Try to call as setter
-                        signal(newValue);
-                    }
-                };
-                props.onInput = inputHandler;
-                props.onChange = inputHandler;
-            } else if (tagName === 'select') {
-                props.attrs.value = computed(() => signal());
-                props.onChange = (event) => {
-                    const newValue = event.target.value;
-                    if (signal.set) {
-                        signal.set(newValue);
-                    } else {
-                        signal(newValue);
-                    }
-                };
-            } else if (node.getAttribute('type') === 'checkbox') {
-                props.attrs.checked = computed(() => signal());
-                props.onChange = (event) => {
-                    const newValue = event.target.checked;
-                    if (signal.set) {
-                        signal.set(newValue);
-                    } else {
-                        signal(newValue);
-                    }
-                };
-            }
+        let signal = context[modelExpr];
+
+        // Support signals as [getter, setter] pairs
+        let getter, setter;
+        if (typeof signal === 'function') {
+            getter = signal;
+            setter = signal.set || context[`set${modelExpr.charAt(0).toUpperCase() + modelExpr.slice(1)}`];
+        } else if (Array.isArray(signal) && signal.length === 2 && typeof signal[0] === 'function' && typeof signal[1] === 'function') {
+            getter = signal[0];
+            setter = signal[1];
+        } else {
+            // Try to find getter/setter in context
+            getter = () => signal;
+            setter = context[`set${modelExpr.charAt(0).toUpperCase() + modelExpr.slice(1)}`];
+        }
+
+        if (!getter || typeof getter !== 'function' || !setter || typeof setter !== 'function') {
+            console.warn(`x-model: '${modelExpr}' is not a valid signal or setter is missing in context.`);
+            return;
+        }
+
+        if (!props.attrs) props.attrs = {};
+        const tagName = node.tagName.toLowerCase();
+        const type = node.getAttribute('type');
+
+        if (tagName === 'input' && type === 'checkbox') {
+            props.attrs.checked = computed(() => getter());
+            props.onChange = (event) => {
+                setter(event.target.checked);
+            };
+        } else if (tagName === 'input' || tagName === 'textarea') {
+            props.attrs.value = computed(() => getter());
+            const inputHandler = (event) => {
+                setter(event.target.value);
+            };
+            props.onInput = inputHandler;
+            props.onChange = inputHandler;
+        } else if (tagName === 'select') {
+            props.attrs.value = computed(() => getter());
+            props.onChange = (event) => {
+                setter(event.target.value);
+            };
         }
     }
 };
