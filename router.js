@@ -1,6 +1,6 @@
 // router.js
 import { renderRoute } from './render.js';
-import { attachLinkInterception } from './navigation.js';
+import { attachLinkInterception, navigate } from './navigation.js'; // Add this import
 
 export const routes = [];
 
@@ -101,7 +101,6 @@ export { defineRoute };
  * @returns {object|null} An object containing matched routes and params, or null if no match.
  */
 function matchNestedRoute(path, routeList = routes, currentMatchedPathSegment = '') {
-    console.debug(`Trying to match path: "${path}" with current segment: "${currentMatchedPathSegment}"`);
     //console.debug(`Available routes:`, routeList.map(r => r.path));
     
     // Normalize path to match, ensure it starts with / and no trailing slash unless it's "/"
@@ -186,7 +185,8 @@ export function findMatchingRoute(path) {
 }
 
 export function startRouter() {
-    // Initial render and attachLinkInterception are now handled in startApp for unified startup
-    window.addEventListener("popstate", () => renderRoute(location.pathname + location.search));
+    window.addEventListener("popstate", () =>
+        navigate(location.pathname + location.search, { triggeredByPopstate: true })
+    );
     attachLinkInterception();
 }

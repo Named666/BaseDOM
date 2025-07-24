@@ -61,7 +61,7 @@ const navigation = {
 };
 
 // Modified navigate to handle guards and navigation state
-export async function navigate(path, { replace = false } = {}) {
+export async function navigate(path, { replace = false, triggeredByPopstate = false } = {}) {
     return new Promise(async (resolve, reject) => {
         if (navigation.pending) {
             console.warn('Navigation already in progress. Ignoring new navigation to:', path);
@@ -69,22 +69,23 @@ export async function navigate(path, { replace = false } = {}) {
         }
 
         const currentPath = location.pathname + location.search;
-        // If navigating to the exact same path and not a forced replacement, just resolve.
-        // This includes query params in the check.
         if (path === currentPath && !replace) {
             console.log('Already at target path, resolving navigation.');
             return resolve();
         }
 
         saveScrollPosition();
-
-        navigation.pending = path; // Set pending path
+        navigation.pending = path;
 
         try {
+            // Only match current route for guards
             const currentRouteMatch = findMatchingRoute(currentPath.split('?')[0]);
+            // Do NOT call findMatchingRoute for target path here
             const [cleanTargetPath, targetQueryString] = path.split('?');
-            const targetRouteMatch = findMatchingRoute(cleanTargetPath);
             const targetQueryParams = parseQuery(targetQueryString || '');
+
+            // If you need guards for the target, you can match, but avoid logging
+            const targetRouteMatch = findMatchingRoute(cleanTargetPath);
 
             const navigationContext = {
                 from: currentRouteMatch,
@@ -129,11 +130,12 @@ export async function navigate(path, { replace = false } = {}) {
             // Render the new route
             await renderRoute(path);
 
-            // Update history
-            if (replace) {
-                history.replaceState({}, "", path);
-            } else {
-                history.pushState({}, "", path);
+            if (!triggeredByPopstate) {
+                if (replace) {
+                    history.replaceState({}, "", path);
+                } else {
+                    history.pushState({}, "", path);
+                }
             }
 
             // Update current navigation state
@@ -175,11 +177,16 @@ export async function navigate(path, { replace = false } = {}) {
 
 export function attachLinkInterception() {
     document.body.addEventListener('click', (e) => {
+        // Only intercept left-clicks without modifier keys
+        if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
         const link = e.target.closest('a[x-link], a[href]');
-
         if (link && link.origin === location.origin) { // Only intercept internal links
             e.preventDefault();
-            navigate(link.getAttribute("href"));
+            // Prevent double navigation if already at the target path
+            const href = link.getAttribute("href");
+            if (href !== location.pathname + location.search) {
+                navigate(href);
+            }
         }
     });
 }
