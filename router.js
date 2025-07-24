@@ -108,27 +108,18 @@ function matchNestedRoute(path, routeList = routes, currentMatchedPathSegment = 
     const normalizedPathToMatch = path === '/' ? '/' : path.replace(/\/$/, '');
     
     for (const route of routeList) {
-        // For child routes, we need to match against the remaining path after the parent match
         const remainingPath = normalizedPathToMatch.substring(currentMatchedPathSegment.length);
         const pathToTest = currentMatchedPathSegment === '' ? normalizedPathToMatch : remainingPath;
-        
-        //console.debug(`Testing route "${route.path}" against pathToTest: "${pathToTest}"`);
-        
         const match = pathToTest.match(route.regex);
-        
         if (match) {
             const matchedSegment = match[0];
             const params = {};
             route.paramNames.forEach((name, i) => {
                 params[name] = match[i + 1];
             });
-
             const newMatchedPathSegment = currentMatchedPathSegment + matchedSegment;
             const stillRemainingPath = normalizedPathToMatch.substring(newMatchedPathSegment.length);
             const hasMorePath = stillRemainingPath.length > 0 && stillRemainingPath !== '/';
-
-            console.debug(`Matched! newMatchedPathSegment: "${newMatchedPathSegment}", stillRemainingPath: "${stillRemainingPath}", hasMorePath: ${hasMorePath}`);
-
             if (!hasMorePath) {
                 // Exact match - check if there's an index child route
                 if (route.children?.length) {
@@ -145,7 +136,6 @@ function matchNestedRoute(path, routeList = routes, currentMatchedPathSegment = 
                     params
                 };
             }
-
             // Recursively match child routes
             if (route.children?.length) {
                 const childMatch = matchNestedRoute(normalizedPathToMatch, route.children, newMatchedPathSegment);
@@ -156,7 +146,6 @@ function matchNestedRoute(path, routeList = routes, currentMatchedPathSegment = 
                     };
                 }
             }
-
             // Wildcard match returns here too
             if (route.path.includes('*') && route.paramNames.length) {
                 return {
@@ -197,6 +186,7 @@ export function findMatchingRoute(path) {
 }
 
 export function startRouter() {
-    window.addEventListener("popstate", () => renderRoute(location.pathname + location.search));
     // Initial render and attachLinkInterception are now handled in startApp for unified startup
+    window.addEventListener("popstate", () => renderRoute(location.pathname + location.search));
+    attachLinkInterception();
 }

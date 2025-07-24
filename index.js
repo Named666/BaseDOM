@@ -12,14 +12,11 @@ import { startRouter } from './router.js';
 import { renderRoute } from './render.js';
 // Import and register directives
 import './directives.js';
-import { attachLinkInterception } from './navigation.js';
-
 export function startApp(rootSelector = '#app') {
     function doStart() {
-        initialize(rootSelector);
         startRouter();
+        initialize(rootSelector);
         renderRoute(location.pathname + location.search);
-        attachLinkInterception();
     }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', doStart, { once: true });

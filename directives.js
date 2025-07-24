@@ -158,15 +158,15 @@ export const xOnDirective = {
     controlFlow: false,
     handle: (parsingContext, props) => {
         const { node, context } = parsingContext;
-        
         // Check if this node has any x-on: attributes
         if (!node.attributes) return;
-        
         for (const attr of node.attributes) {
             if (attr.name.startsWith('x-on:')) {
-                const eventName = attr.name.substring(5);
+                let eventName = attr.name.substring(5);
+                // Map aliases for convenience
+                if (eventName === 'hover' || eventName === 'enter') eventName = 'mouseenter';
+                if (eventName === 'leave') eventName = 'mouseleave';
                 const handlerExpr = attr.value;
-                // Support both function references and function calls
                 props[`on${eventName.charAt(0).toUpperCase() + eventName.slice(1)}`] = (event) => {
                     // Add event and common event properties to context
                     const eventContext = {
@@ -284,7 +284,7 @@ export const xModelDirective = {
     }
 };
 
-export const xFetchDirective = {
+export const FetchDirective = {
     controlFlow: false,
     handle: (parsingContext, props) => {
         const { node, context } = parsingContext;
@@ -521,8 +521,8 @@ registerDirective('x-on', xOnDirective);
 registerDirective('x-bind', xBindDirective);
 registerDirective('x-show', xShowDirective);
 registerDirective('x-model', xModelDirective);
-registerDirective('x-get', xFetchDirective);
-registerDirective('x-post', xFetchDirective);
+registerDirective('x-get', FetchDirective);
+registerDirective('x-post', FetchDirective);
 registerDirective('x-mount', xMountDirective);
 registerDirective('x-unmount', xUnmountDirective);
 registerDirective('x-update', xUpdateDirective);
