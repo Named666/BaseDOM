@@ -1,7 +1,7 @@
 // directives.js
 import { computed } from './state.js';
 import { evaluateExpression, _reactive } from './expression.js';
-import { parseNode, registerDirective, parseComponent } from './parser.js';
+import { registerDirective, parseComponent } from './parser.js';
 import { renderComponent } from './components.js';
 
 /**

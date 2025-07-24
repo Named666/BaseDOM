@@ -17,9 +17,9 @@ The core philosophy of BaseDOM is to provide a developer experience that is:
 
 -   🔄 **Signal-based Reactivity** - Fine-grained updates with `signal`, `computed`, and `effect`.
 -   🧩 **Single-File Components** - Keep HTML, CSS, and JS in one file with automatic style scoping.
+-   훅 **Lifecycle Hooks** - Tap into the component lifecycle with `onMount`, `onUnmount`, and `onUpdate`.
 -   🌐 **Declarative AJAX** - Load dynamic content with HTML attributes, similar to HTMX.
 -   📱 **SPA Routing** - Nested routes, layouts, guards, and programmatic navigation.
--   훅 **Lifecycle Hooks** - Tap into the component lifecycle with `onMount` and `onUnmount`.
 -   🚀 **Zero Build Setup** - Works directly in the browser with ES modules.
 
 ---
@@ -65,11 +65,21 @@ The core philosophy of BaseDOM is to provide a developer experience that is:
 
       const doubleCount = computed(() => count() * 2);
 
+      const onMount = (element) => {
+        console.log('Counter mounted!', element);
+      };
+
+      const onUnmount = () => {
+        console.log('Counter unmounted!');
+      };
+
       return {
         count,
         message,
         doubleCount,
-        increment: () => setCount(count() + 1)
+        increment: () => setCount(count() + 1),
+        onMount,
+        onUnmount
       };
     }
     </script>
@@ -148,6 +158,7 @@ Directives are special `x-` attributes in your template that provide dynamic fun
 | `x-bind:attribute="expr"` | Binds an attribute to a dynamic value. Shorthand: `:attribute`. | `<a x-bind:href="url">Link</a>` |
 | `x-model="signalName"` | Provides two-way data binding for form inputs. | `<input x-model="searchText">` |
 | `x-show="condition"` | Toggles the element's `display` style between `''` and `'none'`. | `<div x-show="isVisible">...</div>` |
+| `x-mount`, `x-unmount`, `x-update` | Attach lifecycle hooks directly in the template. | `<div x-mount="onMountHandler"></div>` |
 
 ### Scoped Styling
 
@@ -167,12 +178,79 @@ Styles inside a `<style>` tag in an SFC are automatically scoped to that compone
 
 ## API & Features
 
+### Lifecycle Hooks (`lifecycle.js`)
+
+BaseDOM provides a powerful and consistent lifecycle system to manage side effects, initialization, and cleanup logic for your components and elements.
+
+There are three main hooks:
+
+-   `onMount(element)`: Called when an element is added to the DOM. Ideal for setup, data fetching, or initializing third-party libraries.
+-   `onUnmount()`: Called just before an element is removed from the DOM. Crucial for cleanup to prevent memory leaks (e.g., clearing intervals, removing event listeners).
+-   `onUpdate()`: Called when a component's reactive state causes it to re-render. Useful for logic that needs to run on every update.
+
+You can use these hooks in several ways:
+
+**1. In Programmatic Components**
+
+Pass them as properties when creating elements with the `html.js` factories.
+
+```javascript
+import { div } from './basedom/html.js';
+
+function MyComponent() {
+  return div({
+    onMount: (element) => console.log('Mounted!', element),
+    onUnmount: () => console.log('Unmounted!'),
+    children: 'Hello, World!'
+  });
+}
+```
+
+**2. In Single-File Components (SFCs)**
+
+You have two options in SFCs:
+
+*   **Component-Level Hooks:** Return `onMount`, `onUnmount`, or `onUpdate` from your component's `<script>` function. This applies the hooks to the component's root element.
+
+    ```html
+    <script>
+    export default function() {
+      const onMount = (element) => {
+        console.log('Component mounted:', element);
+      };
+      return { onMount };
+    }
+    </script>
+    ```
+
+*   **Template-Level Directives:** For more granular control, attach hooks to any element within your template using the `x-mount`, `x-unmount`, and `x-update` directives.
+
+    ```html
+    <template>
+      <div x-mount="onDivMount">I have a mount hook.</div>
+      <button x-mount="onButtonMount">I also have one!</button>
+    </template>
+    <script>
+    export default function() {
+      return {
+        onDivMount: (el) => console.log('Div mounted'),
+        onButtonMount: (el) => console.log('Button mounted')
+      };
+    }
+    </script>
+    ```
+
+**Best Practices:**
+
+-   **Always Clean Up:** Anything you set up in `onMount` (like timers or event listeners) should be torn down in `onUnmount`.
+-   **Third-Party Libraries:** `onMount` is the perfect place to initialize a non-reactive library (like a chart or map), and `onUnmount` is where you should destroy it.
+-   **Composition:** The framework automatically handles multiple hooks. If you have an `onMount` at the component level and another `x-mount` on an element inside, both will be called correctly.
+
 ### Programmatic Components (`html.js`)
 
 While SFCs are great, you can also create components programmatically in JavaScript. This is useful for creating reusable, composable UI elements.
 
 -   **Element Factories:** `html.js` exports functions for all standard HTML tags (`div`, `p`, `button`, etc.).
--   **Lifecycle Hooks:** Components can have `onMount` and `onUnmount` lifecycle hooks.
 
 ```javascript
 import { div, p, button } from './basedom/html.js';

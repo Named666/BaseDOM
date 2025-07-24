@@ -1,5 +1,12 @@
 // components.js
 import { effect } from './state.js';
+import { 
+  attachLifecycleHooks, 
+  callOnMountRecursive, 
+  callOnUnmountRecursive, 
+  replaceContent,
+  safeAppendElement 
+} from './lifecycle.js';
 
 function hashString(str) {
   let hash = 0;
@@ -206,20 +213,6 @@ export function createComponent(tag, options = {}) {
   }
 
   // Process children
-  // Helper to recursively call __onUnmount on a node and its descendants
-  function callUnmountRecursive(node) {
-    if (typeof node.__onUnmount === 'function') {
-      try {
-        node.__onUnmount();
-      } catch (e) {
-        console.error('onUnmount in reactive child failed', e);
-      }
-    }
-    if (node.children) {
-      Array.from(node.children).forEach(callUnmountRecursive);
-    }
-  }
-
   const appendChild = (child) => {
     if (typeof child === "function") {
       const marker = document.createTextNode(''); // Stable placeholder
@@ -248,9 +241,11 @@ export function createComponent(tag, options = {}) {
           newNodes.push(document.createTextNode(String(reactiveValue)));
         }
 
-        // Remove old nodes (call unmount recursively)
+        // Remove old nodes using unified lifecycle system
         currentChildNodes.forEach(node => {
-          callUnmountRecursive(node);
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            callOnUnmountRecursive(node);
+          }
           if (node.parentNode === element) {
             element.removeChild(node);
           }
@@ -261,21 +256,12 @@ export function createComponent(tag, options = {}) {
         newNodes.forEach(newNode => {
           element.insertBefore(newNode, marker);
           currentChildNodes.push(newNode);
-          // Call onMount recursively on newly added elements
-          const callOnMountRecursive = (node) => {
-            if (node.__onMount && typeof node.__onMount === 'function' && !mountedNodes.has(node)) {
-              try {
-                node.__onMount(node);
-                mountedNodes.add(node);
-              } catch (e) {
-                console.error('onMount in reactive child failed', e);
-              }
-            }
-            if (node.children) {
-              Array.from(node.children).forEach(callOnMountRecursive);
-            }
-          };
-          callOnMountRecursive(newNode);
+          
+          // Call onMount using unified lifecycle system for element nodes
+          if (newNode.nodeType === Node.ELEMENT_NODE && !mountedNodes.has(newNode)) {
+            callOnMountRecursive(newNode);
+            mountedNodes.add(newNode);
+          }
         });
       }));
 
@@ -288,15 +274,18 @@ export function createComponent(tag, options = {}) {
       tempDiv.innerHTML = child.__html;
       const nodesToAppend = Array.from(tempDiv.childNodes);
 
-      // Append them
+      // Append them and attach lifecycle hooks using unified system
       nodesToAppend.forEach(node => {
         element.appendChild(node);
-        // Now, if child had lifecycle hooks, you can attach them to the *actual* appended DOM node.
-        // This assumes the __html produces a single root node or you have a strategy for multiple.
-        // For simplicity, attaching to each top-level node created by the raw html.
-        if (child.__onMount) node.__onMount = child.__onMount;
-        if (child.__onUnmount) node.__onUnmount = child.__onUnmount;
-        if (child.__onUpdate) node.__onUpdate = child.__onUpdate;
+        // Use unified lifecycle system for HTML nodes with lifecycle hooks
+        if (node.nodeType === Node.ELEMENT_NODE && 
+           (child.__onMount || child.__onUnmount || child.__onUpdate)) {
+          attachLifecycleHooks(node, {
+            onMount: child.__onMount,
+            onUnmount: child.__onUnmount,
+            onUpdate: child.__onUpdate
+          });
+        }
       });
 
     } else {
@@ -310,34 +299,19 @@ export function createComponent(tag, options = {}) {
     appendChild(children);
   }
 
-  // Attach lifecycle hooks directly to the element
-  const onUnmountWrapper = () => {
-    effectsToCleanup.forEach(cleanup => cleanup()); // Run all effect cleanup functions
+  // Attach lifecycle hooks using unified system and include effects cleanup
+  const effectsCleanup = effectsToCleanup.length > 0 ? () => {
+    effectsToCleanup.forEach(cleanup => cleanup());
     effectsToCleanup.length = 0;
-    if (onUnmount) onUnmount(); // Run user-defined onUnmount
-  };
-  
-  // Compose onMount hooks if there are existing ones
-  if (onMount) {
-    const existingOnMount = element.__onMount;
-    element.__onMount = existingOnMount 
-      ? (el) => { existingOnMount(el); onMount(el); }
-      : onMount;
-  }
-  
-  // Compose onUnmount hooks if there are existing ones
-  const existingOnUnmount = element.__onUnmount;
-  element.__onUnmount = existingOnUnmount 
-    ? () => { onUnmountWrapper(); existingOnUnmount(); }
-    : onUnmountWrapper;
+  } : null;
 
-  // Compose onUpdate hooks if there are existing ones
-  if (onUpdate) {
-    const existingOnUpdate = element.__onUpdate;
-    element.__onUpdate = existingOnUpdate 
-      ? (el) => { existingOnUpdate(el); onUpdate(el); }
-      : onUpdate;
-  }
+  attachLifecycleHooks(element, {
+    onMount,
+    onUnmount: effectsCleanup ? 
+      (onUnmount ? () => { effectsCleanup(); onUnmount(); } : effectsCleanup) :
+      onUnmount,
+    onUpdate
+  });
 
   return element;
 }
@@ -345,51 +319,19 @@ export function createComponent(tag, options = {}) {
 // Lifecycle-aware rendering
 export function renderComponent(component, container) {
   console.log(`Rendering component in container: #${container.id} (${container.tagName})`);
-  // Before rendering new content, unmount old content recursively
-  Array.from(container.children).forEach(child => {
-    const callUnmountRecursive = (node) => {
-      if (node.__onUnmount && typeof node.__onUnmount === 'function') {
-        node.__onUnmount();
-      }
-      if (node.children) {
-        Array.from(node.children).forEach(callUnmountRecursive);
-      }
-    };
-    callUnmountRecursive(child);
-  });
-
-  // Clear the container
-  while (container.firstChild) {
-    container.removeChild(container.firstChild);
-  }
+  
+  // Use the unified lifecycle system for cleanup and mounting
+  replaceContent(container, null); // This handles unmounting existing content
 
   // Render new component
   const elementToRender = typeof component === "function" ? component() : component;
 
   if (elementToRender instanceof HTMLElement || elementToRender instanceof DocumentFragment) {
-    container.appendChild(elementToRender);
+    safeAppendElement(container, elementToRender); // This handles mounting
   } else {
     // Handle cases where component might return a string, number, or other primitive
     container.textContent = String(elementToRender);
   }
-
-  // Call onMount hooks for newly added elements recursively
-  const callOnMountRecursive = (node) => {
-    if (node.__onMount && typeof node.__onMount === 'function') {
-      node.__onMount(node);
-    }
-    if (node.children) {
-      Array.from(node.children).forEach(callOnMountRecursive);
-    }
-  };
-  // If the root elementToRender is a DocumentFragment, its children are the top-level nodes
-  if (elementToRender instanceof DocumentFragment) {
-    Array.from(elementToRender.childNodes).forEach(callOnMountRecursive);
-  } else if (elementToRender instanceof HTMLElement) {
-    callOnMountRecursive(elementToRender);
-  }
-  // Also, iterate over the actual children appended to the container (if elementToRender was a fragment)
-  Array.from(container.children).forEach(callOnMountRecursive);
 }
 
 
@@ -403,19 +345,5 @@ export function withLifecycle(html, { onMount, onUnmount, onUpdate } = {}) {
   };
 }
 
-// Helper to trigger onUpdate lifecycle hook on an element and its descendants
-export function triggerUpdate(element) {
-  const callOnUpdateRecursive = (node) => {
-    if (node.__onUpdate && typeof node.__onUpdate === 'function') {
-      try {
-        node.__onUpdate(node);
-      } catch (e) {
-        console.error('onUpdate lifecycle hook failed', e);
-      }
-    }
-    if (node.children) {
-      Array.from(node.children).forEach(callOnUpdateRecursive);
-    }
-  };
-  callOnUpdateRecursive(element);
-}
+// Re-export triggerUpdate from the unified lifecycle system
+export { triggerUpdate } from './lifecycle.js';

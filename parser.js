@@ -2,6 +2,7 @@
 import { Element } from './html.js';
 import { signal, effect, computed } from './state.js';
 import { ExpressionParser, expressionParser, _reactive, evaluateExpression } from './expression.js';
+import { attachLifecycleHooks, wrapReactiveElement } from './lifecycle.js';
 
 
 // --- Core Parsing Logic ---
@@ -105,7 +106,7 @@ export async function parseComponent(htmlText) {
             if (nodes.length === 1) {
                 // Single root node - apply styles and lifecycle hooks to it
                 const element = parseNode(nodes[0], otherContext, styles);
-                return attachLifecycleHooks(element, lifecycleHooks);
+                return attachLifecycleHooksToElement(element, lifecycleHooks);
             } else if (nodes.length > 1) {
                 // Multiple root nodes - wrap in a fragment with styles and lifecycle hooks applied to wrapper
                 const children = nodes.map(n => parseNode(n, otherContext)).filter(Boolean);
@@ -215,44 +216,16 @@ function preprocessNodes(nodes) {
     return processedNodes;
 }
 
-// Helper function to attach lifecycle hooks to parsed elements
-function attachLifecycleHooks(element, lifecycleHooks) {
+// Helper function to attach lifecycle hooks to parsed elements using unified system
+function attachLifecycleHooksToElement(element, lifecycleHooks) {
     const { onMount, onUnmount, onUpdate } = lifecycleHooks;
     
     if (typeof element === 'function') {
-        // For reactive elements, we need to wrap them to add lifecycle support
-        return () => {
-            const renderedElement = element();
-            if (renderedElement instanceof HTMLElement) {
-                if (onMount && !renderedElement.__onMount) {
-                    renderedElement.__onMount = onMount;
-                }
-                if (onUnmount) {
-                    const existingUnmount = renderedElement.__onUnmount;
-                    renderedElement.__onUnmount = existingUnmount 
-                        ? () => { existingUnmount(); onUnmount(); }
-                        : onUnmount;
-                }
-                if (onUpdate && !renderedElement.__onUpdate) {
-                    renderedElement.__onUpdate = onUpdate;
-                }
-            }
-            return renderedElement;
-        };
+        // For reactive elements, use the unified wrapper system
+        return wrapReactiveElement(element, { onMount, onUnmount, onUpdate });
     } else if (element instanceof HTMLElement) {
-        // For static elements, attach directly
-        if (onMount && !element.__onMount) {
-            element.__onMount = onMount;
-        }
-        if (onUnmount) {
-            const existingUnmount = element.__onUnmount;
-            element.__onUnmount = existingUnmount 
-                ? () => { existingUnmount(); onUnmount(); }
-                : onUnmount;
-        }
-        if (onUpdate && !element.__onUpdate) {
-            element.__onUpdate = onUpdate;
-        }
+        // For static elements, attach directly using unified system
+        return attachLifecycleHooks(element, { onMount, onUnmount, onUpdate });
     }
     
     return element;

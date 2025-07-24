@@ -36,6 +36,7 @@ export * from './html.js';
 export * from './render.js';
 export * from './router.js';
 export * from './parser.js';
+export * from './lifecycle.js';
 
 // Development mode flag
 const DEV_MODE = !import.meta.env?.PROD && globalThis.location?.hostname === 'localhost';
