@@ -75,12 +75,15 @@ function processNodesRecursively(element, hookName, passElement = true, children
         }
 
         if (node[hookName] && typeof node[hookName] === 'function') {
+            // Only call onMount if not already mounted
+            if (hookName === '__onMount' && node.__mounted) return;
             try {
                 if (passElement) {
                     node[hookName](node);
                 } else {
                     node[hookName]();
                 }
+                if (hookName === '__onMount') node.__mounted = true;
             } catch (e) {
                 console.error(`${hookName} lifecycle hook failed:`, e, node);
             }
