@@ -1,4 +1,22 @@
 # BaseDOM
+[//] Table of Contents
+
+1. [Introduction](#introduction)
+2. [Philosophy](#philosophy)
+3. [Key Features](#key-features)
+4. [Getting Started](#getting-started)
+5. [Core Concepts](#core-concepts)
+6. [API & Features](#api--features)
+    - [Lifecycle Hooks](#lifecycle-hooks-lifecyclejs)
+    - [Programmatic Components](#programmatic-components-htmljs)
+    - [Keyed List Rendering](#keyed-list-rendering)
+    - [Routing](#routing-routerjs)
+    - [Form Handling](#form-handling-formjs--validationjs)
+    - [Global State](#global-state-createstore)
+    - [Declarative AJAX](#declarative-ajax)
+7. [Contributing](#contributing)
+8. [TODO & Roadmap](#todo--roadmap)
+
 
 BaseDOM is a lightweight, reactive JavaScript framework for building dynamic web applications without the complexity. It features signal-based reactivity, a declarative component architecture, and powerful directives—all with zero build setup required.
 
@@ -15,12 +33,15 @@ The core philosophy of BaseDOM is to provide a developer experience that is:
 
 ## Key Features
 
--   🔄 **Signal-based Reactivity** - Fine-grained updates with `signal`, `computed`, and `effect`.
--   🧩 **Single-File Components** - Keep HTML, CSS, and JS in one file with automatic style scoping.
--   훅 **Lifecycle Hooks** - Tap into the component lifecycle with `onMount`, `onUnmount`, and `onUpdate`.
--   🌐 **Declarative AJAX** - Load dynamic content with HTML attributes, similar to HTMX.
--   📱 **SPA Routing** - Nested routes, layouts, guards, and programmatic navigation.
--   🚀 **Zero Build Setup** - Works directly in the browser with ES modules.
+-   **Signal-based Reactivity**: Fine-grained updates with `signal`, `computed`, and `effect`.
+-   **Single-File Components**: Keep HTML, CSS, and JS in one file with automatic style scoping.
+-   **Lifecycle Hooks**: Tap into the component lifecycle with `onMount`, `onUnmount`, and `onUpdate`.
+-   **Declarative AJAX**: Load dynamic content with HTML attributes, similar to HTMX.
+-   **SPA Routing**: Nested routes, layouts, guards, and programmatic navigation.
+-   **Zero Build Setup**: Works directly in the browser with ES modules.
+-   **Global State Management**: A powerful global store for managing complex application state.
+-   **Scoped Styling**: Automatic style scoping for components.
+-   **And much more!**
 
 ---
 
@@ -162,7 +183,7 @@ Directives are special `x-` attributes in your template that provide dynamic fun
 
 ### Scoped Styling
 
-Styles inside a `<style>` tag in an SFC are automatically scoped to that component. This prevents styles from leaking out and affecting other parts of your application. You can also target the component's root element itself using the `&` symbol.
+Styles inside a `<style>` tag in an SFC are automatically scoped to that component. This prevents styles from leaking out and affecting other parts of your application. You can also target clethe component's root element itself using the `&` symbol.
 
 ```html
 <style>
@@ -301,24 +322,150 @@ const MyList = () => ul({},
 
 ### Routing (`router.js`)
 
-BaseDOM includes a file-based router with support for nesting, layouts, and navigation guards.
+BaseDOM includes a powerful file-based router supporting:
 
--   `defineRoute(config)`: Defines a route. It can take a path string or a config object with `path`, `component`, `children`, `guards`, and `meta`.
--   `startApp()`: Initializes the router and application.
--   `navigate(path)`: Programmatically navigates to a new path.
+- Nested routes and layouts
+- Route guards (sync/async)
+- Programmatic navigation
+- Route meta fields
+- Dynamic parameters
 
-**Layouts and Nested Routes:** A layout is a parent component that contains an `<div x-outlet></div>` or `<div x-outlet="main"></div>`. Child routes are rendered inside this outlet.
+#### Basic SPA Routing Example
 
 ```javascript
-// app.js
+import { startApp } from './basedom/index.js';
 import { defineRoute } from './basedom/router.js';
 
 defineRoute({
-  path: '/app',
-  component: './layouts/AppLayout.html', // Contains <div x-outlet></div>
+  path: '/',
+  component: './layouts/MainLayout.html', // Layout with <div x-outlet></div>
   children: [
-    { path: '/', component: './pages/Dashboard.html' }, // Rendered in AppLayout's outlet
-    { path: '/profile', component: './pages/Profile.html' }
+    { path: '/', component: './pages/Home.html' },
+    { path: '/about', component: './pages/About.html' },
+    { path: '/profile/:userId', component: './pages/Profile.html' },
+    { path: '/login', component: './pages/Login.html' }
+  ]
+});
+
+startApp('#app');
+```
+
+#### Layouts & Nested Routes
+
+`MainLayout.html`:
+```html
+<template>
+  <nav>
+    <a href="/">Home</a>
+    <a href="/about">About</a>
+    <a href="/profile/42">Profile</a>
+  </nav>
+  <div x-outlet></div>
+</template>
+<script>
+export default function() {
+  return {};
+}
+</script>
+```
+
+#### Route Guards Example
+
+```javascript
+import { defineRoute, navigate } from './basedom/router.js';
+
+function authGuard(ctx) {
+  if (!ctx.store.getValue('currentUser')) {
+    navigate('/login');
+    return false;
+  }
+  return true;
+}
+
+defineRoute({
+  path: '/dashboard',
+  component: './pages/Dashboard.html',
+  guards: [authGuard],
+  meta: { requiresAuth: true }
+});
+```
+
+#### Async Guards Example
+
+```javascript
+async function adminGuard(ctx) {
+  const user = await ctx.store.getValue('currentUser');
+  if (!user || !user.isAdmin) {
+    navigate('/');
+    return false;
+  }
+  return true;
+}
+
+defineRoute({
+  path: '/admin',
+  component: './pages/Admin.html',
+  guards: [adminGuard]
+});
+```
+
+#### Programmatic Navigation
+
+```javascript
+import { navigate } from './basedom/router.js';
+
+// In a component method
+function goToProfile(id) {
+  navigate(`/profile/${id}`);
+}
+```
+
+#### Dynamic Parameters
+
+In `Profile.html`:
+```html
+<template>
+  <h1>Profile for User #{{ $route.params.userId }}</h1>
+</template>
+<script>
+export default function({ $route }) {
+  // $route.params.userId is available
+  return {};
+}
+</script>
+```
+
+#### Route Meta Usage
+
+```javascript
+defineRoute({
+  path: '/settings',
+  component: './pages/Settings.html',
+  meta: { requiresAuth: true, title: 'Settings' }
+});
+```
+
+#### Layouts with Named Outlets
+
+```html
+<template>
+  <header>Header</header>
+  <main>
+    <div x-outlet="main"></div>
+  </main>
+  <aside>
+    <div x-outlet="sidebar"></div>
+  </aside>
+</template>
+```
+
+```javascript
+defineRoute({
+  path: '/app',
+  component: './layouts/AppLayout.html',
+  children: [
+    { path: '/', component: './pages/Dashboard.html', outlet: 'main' },
+    { path: '/menu', component: './pages/Menu.html', outlet: 'sidebar' }
   ]
 });
 ```
