@@ -1,9 +1,11 @@
 
 // render.js
+
 import { findMatchingRoute, parseQuery } from './router.js';
 import { renderComponent, createComponent } from './components.js';
 import { signal } from './state.js';
 import { parseComponent } from './parser.js';
+import { devWarn } from './index.js';
 
 
 let errorBoundary = null;
@@ -27,15 +29,22 @@ const componentCache = new Map();
 async function resolveComponent(component) {
   if (typeof component !== 'string') return component;
   if (!component.endsWith('.html')) return component;
-  if (componentCache.has(component)) return componentCache.get(component);
+  if (componentCache.has(component)) {
+    devWarn(`Component cache hit for: ${component}`);
+    return componentCache.get(component);
+  }
   try {
+    // devWarn(`Fetching component: ${component}`);
     const response = await fetch(component);
-    if (!response.ok) throw new Error(`Failed to fetch component: ${component}`);
+    if (!response.ok) throw new Error(`Failed to fetch component: ${component} (status: ${response.status})`);
     const sfcText = await response.text();
+    // devWarn(`Parsing component: ${component}`);
     const fn = await parseComponent(sfcText);
     componentCache.set(component, fn);
+    devWarn(`Component loaded and cached: ${component}`);
     return fn;
   } catch (error) {
+    devWarn(`Error loading component '${component}': ${error.message}`, error);
     return () => createComponent('div', {
       children: [
         createComponent('h3', { children: 'Component Load Error' }),
@@ -49,38 +58,56 @@ async function resolveComponent(component) {
 export function initialize(selector = '#app') {
   const el = document.querySelector(selector);
   if (el) {
+    devWarn(`Initializing app root at selector: ${selector}`, el);
     rootElement = el;
     renderComponent(createComponent('div', { children: [currentView] }), rootElement);
+  } else {
+    devWarn(`Root element not found for selector: ${selector}`);
   }
 }
 
 export function setRootElement(selector) {
   const el = document.querySelector(selector);
   if (el) {
+    devWarn(`Setting new root element: ${selector}`, el);
     rootElement = el;
     rootElementSelector = selector;
     renderComponent(createComponent('div', { children: [currentView] }), rootElement);
+  } else {
+    devWarn(`Root element not found for selector: ${selector}`);
   }
 }
 
 
 export async function renderRoute(pathname) {
-  if (!rootElement) return;
-  for (const hook of hooks.before) await Promise.resolve(hook());
+  if (!rootElement) {
+    devWarn('renderRoute called but rootElement is not set.');
+    return;
+  }
+//   devWarn(`Rendering route: ${pathname}`);
+  for (const hook of hooks.before) {
+    devWarn('Calling before-render hook', hook);
+    await Promise.resolve(hook());
+  }
   try {
     let element;
     const [cleanPath, queryString] = pathname.split('?');
     const query = parseQuery(queryString || '');
+    devWarn(`Parsed route: path='${cleanPath}', query=${JSON.stringify(query)}`);
     const match = findMatchingRoute(cleanPath);
     if (match) {
       const { matched, params } = match;
       const newRoutes = matched.map(m => m.route);
+    //   devWarn(`Route matched: ${matched.map(m => m.route.path).join(' > ')}`);
       // Set document title from route meta
       const titles = matched.map(m => {
         const t = m.route.meta?.title;
         return typeof t === 'function' ? t({ params, query }) : t;
       }).filter(Boolean).reverse();
-      if (titles.length) document.title = titles.join(' / ');
+      if (titles.length) {
+        document.title = titles.join(' / ');
+        // devWarn(`Document title set: ${document.title}`);
+      }
 
       // Partial outlet update for leaf route
       if (
@@ -89,6 +116,7 @@ export async function renderRoute(pathname) {
         prevRoutes.slice(0, -1).every((r, i) => r === newRoutes[i])
       ) {
         const leaf = matched[matched.length - 1];
+        // devWarn(`Partial outlet update for leaf route: ${leaf.route.path}`);
         const componentFn = await resolveComponent(leaf.route.componentFn);
         const outletName = leaf.route.outlet || 'main';
         const outletSelector = outletName === 'main'
@@ -96,6 +124,7 @@ export async function renderRoute(pathname) {
           : `[x-outlet="${outletName}"]`;
         const outlet = document.querySelector(outletSelector);
         if (outlet) {
+        //   devWarn(`Rendering component for outlet '${outletName}' at selector '${outletSelector}'`, outlet);
           const props = {
             params: { ...leaf.params, ...match.params },
             query,
@@ -105,6 +134,8 @@ export async function renderRoute(pathname) {
           renderComponent(() => componentFn(props), outlet);
           prevRoutes = newRoutes;
           return;
+        } else {
+          devWarn(`Outlet not found for selector: ${outletSelector}`);
         }
       }
 
@@ -113,6 +144,7 @@ export async function renderRoute(pathname) {
         let childFn = null;
         for (let i = matched.length - 1; i >= 0; i--) {
           const { route, params: routeParams } = matched[i];
+          devWarn(`Composing layout for route: ${route.path}`);
           const componentFn = await resolveComponent(route.componentFn);
           const currentChild = childFn;
           childFn = () => {
@@ -129,21 +161,31 @@ export async function renderRoute(pathname) {
       })();
     } else {
       document.title = '404 Not Found';
+      devWarn(`No route matched for path: ${pathname}`);
       element = createComponent('h1', { children: '404 Not Found' });
     }
     setCurrentView(element);
     if (match) prevRoutes = match.matched.map(m => m.route);
   } catch (err) {
+    devWarn(`Error during renderRoute: ${err.message}`, err);
     let errorContent;
     if (errorBoundary) {
-      try { errorContent = errorBoundary({ error: err }); }
-      catch { errorContent = createDefaultErrorElement(err); }
+      try {
+        errorContent = errorBoundary({ error: err });
+        devWarn('Custom errorBoundary handled the error.');
+      } catch (e) {
+        devWarn('Error in errorBoundary handler', e);
+        errorContent = createDefaultErrorElement(err);
+      }
     } else {
       errorContent = createDefaultErrorElement(err);
     }
     setCurrentView(errorContent);
   } finally {
-    for (const hook of hooks.after) await Promise.resolve(hook());
+    for (const hook of hooks.after) {
+      devWarn('Calling after-render hook', hook);
+      await Promise.resolve(hook());
+    }
   }
 }
 

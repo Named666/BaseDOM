@@ -12,11 +12,13 @@ import { getComponent } from './registry.js';
  * @returns {Function|string} A computed signal if interpolation is found, otherwise the static text.
  */
 function parseTextNode(text, context) {
+    // if (window.devWarn) devWarn(`[parser.js/parseTextNode] Parsing text node: '${text}'`, { text, context });
     if (!text.includes('{{')) return text;
     const regex = /\{\{(.*?)\}\}/g;
     const match = text.trim().match(/^\{\{(.*)\}\}$/);
     if (match) {
         const expr = match[1].trim();
+        // if (window.devWarn) devWarn(`[parser.js/parseTextNode] Found full interpolation: '{{${expr}}}'`, { expr, context });
         return () => _reactive(evaluateExpression(expr, context));
     }
     const parts = [];
@@ -24,6 +26,7 @@ function parseTextNode(text, context) {
     while ((m = regex.exec(text)) !== null) {
         if (m.index > lastIndex) parts.push(text.slice(lastIndex, m.index));
         const expr = m[1].trim();
+        // if (window.devWarn) devWarn(`[parser.js/parseTextNode] Found interpolation: '{{${expr}}}'`, { expr, context });
         parts.push(() => {
             const v = _reactive(evaluateExpression(expr, context));
             return (v instanceof HTMLElement || v instanceof DocumentFragment) ? '' : (v !== undefined ? v : `{{${expr}}}`);
@@ -41,12 +44,15 @@ function parseTextNode(text, context) {
  */
 
 export async function parseComponent(htmlText) {
+    if (window.devWarn) devWarn('[parser.js/parseComponent] Parsing component', { htmlText });
     try {
         const { template, script, styles } = extractParts(htmlText);
+        if (window.devWarn) devWarn('[parser.js/parseComponent] Extracted parts', { template, script, styles });
         let finalScript = script;
         // Detect <script setup> mode
         const setupMatch = htmlText.match(/<script\s+setup[^>]*>([\s\S]*?)<\/script>/i);
         if (setupMatch) {
+            // if (window.devWarn) devWarn('[parser.js/parseComponent] <script setup> detected', { setup: setupMatch[1] });
             // Compose a default export function that exposes all top-level variables/signals
             let setupCode = setupMatch[1];
             // Indent all lines by 2 spaces for function body, but preserve empty lines
@@ -95,9 +101,13 @@ export async function parseComponent(htmlText) {
             // Compose the new script: wrap setup code inside export default function
             finalScript = `\nexport default function(props, ctx) {\n${setupCode}\n  return { ${identifiers.join(', ')} };\n}`;
         }
+        if (window.devWarn) devWarn('[parser.js/parseComponent] Final script for component', { finalScript });
         const componentModule = await import(`data:text/javascript,${encodeURIComponent(finalScript)}`);
         const componentLogicFn = componentModule.default;
-        if (typeof componentLogicFn !== 'function') throw new Error('Component script must export a default function');
+        if (typeof componentLogicFn !== 'function') {
+            if (window.devWarn) devWarn('[parser.js/parseComponent] Component script did not export a function', { componentModule });
+            throw new Error('Component script must export a default function');
+        }
         const domParser = new DOMParser();
         const doc = domParser.parseFromString(template, 'text/html');
         let nodes = Array.from(doc.body.childNodes).filter(n => n.nodeType === Node.ELEMENT_NODE || n.nodeType === Node.TEXT_NODE);
@@ -106,22 +116,27 @@ export async function parseComponent(htmlText) {
         return (props) => {
             const currentProps = props || {};
             if (!cachedContext || currentProps !== cachedContext.__lastProps) {
+                // if (window.devWarn) devWarn('[parser.js/parseComponent] Creating new context for component', { currentProps });
                 cachedContext = componentLogicFn(currentProps);
                 cachedContext.__lastProps = currentProps;
             }
             const { onMount, onUnmount, onUpdate, ...otherContext } = cachedContext;
             const lifecycleHooks = { onMount, onUnmount, onUpdate };
             if (nodes.length === 1) {
+                // if (window.devWarn) devWarn('[parser.js/parseComponent] Rendering single root node', { node: nodes[0], otherContext });
                 const element = parseNode(nodes[0], otherContext, styles);
                 return attachLifecycleHooksToElement(element, lifecycleHooks);
             } else if (nodes.length > 1) {
+                // if (window.devWarn) devWarn('[parser.js/parseComponent] Rendering multiple root nodes', { nodes, otherContext });
                 const children = nodes.map(n => parseNode(n, otherContext)).filter(Boolean);
                 return Element('div')({ children, ...(styles && { styles }), ...lifecycleHooks });
             } else {
+                if (window.devWarn) devWarn('[parser.js/parseComponent] No content found in template', { template });
                 return Element('div')({ children: 'No content', ...(styles && { styles }), ...lifecycleHooks });
             }
         };
     } catch (error) {
+        if (window.devWarn) devWarn('[parser.js/parseComponent] Error parsing component', { error, htmlText });
         return () => Element('div')({
             style: { color: 'red', border: '1px solid red', padding: '10px' },
             children: [Element('h3')('Component Parse Error'), Element('pre')(error.message)]
@@ -229,60 +244,51 @@ function processDirectives(node, context, parsingContext) {
  * @returns {HTMLElement|Function|null} The parsed component or null.
  */
 export function parseNode(node, context, componentStyles = null) {
+    // if (window.devWarn) devWarn('[parser.js/parseNode] Parsing node', { node, context, componentStyles });
     if (node.nodeType === Node.TEXT_NODE) return parseTextNode(node.textContent, context);
     if (node.nodeType !== Node.ELEMENT_NODE) return null;
 
-
     // Check for custom component tag (PascalCase or kebab-case, registered)
     let tagName = node.tagName;
-    // Support both PascalCase and kebab-case (e.g., UserProfile, user-profile)
     let registryNames = [tagName, tagName.toLowerCase()];
     if (tagName.includes('-')) {
-        // Convert kebab-case to PascalCase for registry lookup
         const pascal = tagName.replace(/(^|\-)([a-z])/g, (_, __, c) => c.toUpperCase());
         registryNames.push(pascal);
         registryNames.push(pascal.toLowerCase());
     }
-    // Try all registry names case-insensitively
     let componentFn = null;
     for (const name of registryNames) {
         componentFn = getComponent(name) || getComponent(name.toLowerCase());
         if (componentFn) break;
     }
     if (componentFn) {
-        // Gather props from attributes
+        if (window.devWarn) devWarn('[parser.js/parseNode] Found custom component', { tagName, registryNames, context });
         const attrs = {};
         for (const attr of Array.from(node.attributes)) {
             let val = attr.value;
-            // Support Vue-style :prop="{{ expr }}"
             if (attr.name.startsWith(':')) {
                 const propName = attr.name.slice(1);
                 if (/^\{\{.*\}\}$/.test(val.trim())) {
-                    // Interpolated expression
                     val = (() => _reactive(evaluateExpression(val.trim().slice(2, -2), context)));
                 }
                 attrs[propName] = val;
             }
         }
-        // Merge props from directives (attribute directives)
         const parsingContext = {
             parseNode: (n, ctx) => parseNode(n, ctx || context),
             componentStyles
         };
         const directiveResult = processDirectives(node, context, parsingContext);
         if (directiveResult && typeof directiveResult === 'object') {
-            // Merge directive props into attrs
             Object.assign(attrs, directiveResult.attrs || {});
-            // Merge event handlers and other props
             for (const k of Object.keys(directiveResult)) {
                 if (k !== 'attrs') attrs[k] = directiveResult[k];
             }
         }
-        // Children as slot (if any)
-        // --- Slot system: collect x-slot children ---
         const children = Array.from(node.childNodes).map(child => parseNode(child, attrs)).filter(child => child !== null && child !== undefined);
         attrs.children = children;
         if (componentStyles) attrs.styles = componentStyles;
+        if (window.devWarn) devWarn('[parser.js/parseNode] Rendering custom component', { tagName, attrs });
         return componentFn(attrs);
     }
 
@@ -292,9 +298,13 @@ export function parseNode(node, context, componentStyles = null) {
         componentStyles
     };
     const directiveResult = processDirectives(node, context, parsingContext);
-    if (typeof directiveResult === 'function') return directiveResult;
+    if (typeof directiveResult === 'function') {
+        // if (window.devWarn) devWarn('[parser.js/parseNode] Directive returned function for node', { node, context });
+        return directiveResult;
+    }
     const props = directiveResult || { attrs: {} };
     if (componentStyles) props.styles = componentStyles;
     const children = Array.from(node.childNodes).map(child => parseNode(child, context)).filter(Boolean);
+    // if (window.devWarn) devWarn('[parser.js/parseNode] Rendering normal element', { tagName, props, children });
     return Element(node.tagName.toLowerCase())({ ...props, children });
 }

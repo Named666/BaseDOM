@@ -160,8 +160,16 @@ export const xOnDirective = {
         const { node, context } = parsingContext;
         if (!node.attributes) return;
         for (const attr of node.attributes) {
+            let isXOn = false;
+            let eventName = '';
             if (attr.name.startsWith('x-on:')) {
-                let eventName = attr.name.substring(5).toLowerCase();
+                isXOn = true;
+                eventName = attr.name.substring(5).toLowerCase();
+            } else if (attr.name.startsWith('@')) {
+                isXOn = true;
+                eventName = attr.name.substring(1).toLowerCase();
+            }
+            if (isXOn) {
                 // Map aliases for convenience
                 if (eventName === 'hover' || eventName === 'enter') eventName = 'mouseenter';
                 if (eventName === 'leave') eventName = 'mouseleave';
@@ -483,6 +491,7 @@ export const defaultDirective = {
         for (const attr of node.attributes) {
             if (
                 !attr.name.startsWith('x-on:') &&
+                !attr.name.startsWith('@') &&
                 !attr.name.startsWith('x-bind:') &&
                 attr.name !== 'x-show' &&
                 attr.name !== 'x-model' &&
@@ -571,6 +580,7 @@ registerDirective('x-if', xIfDirective);
 registerDirective('x-else', xElseDirective);
 registerDirective('x-for', xForDirective);
 registerDirective('x-on', xOnDirective);
+registerDirective('@', xOnDirective);
 registerDirective('x-bind', xBindDirective);
 registerDirective('x-show', xShowDirective);
 registerDirective('x-model', xModelDirective);

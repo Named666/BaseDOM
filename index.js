@@ -37,10 +37,16 @@ export * from './parser.js';
 export * from './lifecycle.js';
 
 // Development mode flag
-const DEV_MODE = !import.meta.env?.PROD && globalThis.location?.hostname === 'localhost';
+export const DEV_MODE = true;
 
-function devWarn(message, node) {
+export function devWarn(message, node) {
     if (DEV_MODE) {
         console.warn(`[BaseDOM]: ${message}`, node);
     }
+}
+if (DEV_MODE) {
+    devWarn('Development mode is enabled', document.body);
+    window.devWarn = devWarn;
+    } else {
+    window.devWarn = () => {}; // No-op in production
 }
