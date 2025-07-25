@@ -203,7 +203,7 @@ To use a component, it must first be registered with a unique name. Once registe
 <template>
   <div>
     <h1>Dashboard</h1>
-    <UserProfileCard :user="currentUser" @logout="handleLogout"></UserProfileCard>
+    <UserProfileCard :user="currentUser"></UserProfileCard>
     <user-profile-card :user="anotherUser"></user-profile-card> <!-- kebab-case also works -->
   </div>
 </template>
@@ -226,7 +226,7 @@ You can pass data to child components using attributes.
 
     ```html
     <template>
-      <MyComponent :user-data="user" :is-active="status === 'active'"></MyComponent>
+      <MyComponent x-bind:user-data="user" x-bind:is-active="status === 'active'"></MyComponent>
     </template>
     <script>
     export default function() {
@@ -280,15 +280,19 @@ export default function(props) {
 </script>
 ```
 
-**4. Content Projection with Slots**
 
-To project content from a parent into a specific place in a child component, you can use the `<slot>` element. Any content placed between the opening and closing tags of your custom component in the parent will be rendered where the `<slot>` tag appears in the child.
+**4. Content Projection with Slots (Vue-like Slot System)**
+
+BaseDOM supports a powerful, Vue-like slot system for content projection and advanced component composition.
+
+#### Default Slot
+
+Any content placed between the opening and closing tags of your custom component in the parent will be rendered where the `<slot>` tag appears in the child. This is called the default slot.
 
 *Parent Component:*
 ```html
 <template>
   <Card>
-    <!-- This content is passed to the child -->
     <h4>Important Message</h4>
     <p>This is the content that will be placed inside the Card's slot.</p>
   </Card>
@@ -307,12 +311,77 @@ To project content from a parent into a specific place in a child component, you
     </div>
   </div>
 </template>
-
-<style>
-  .card { border: 1px solid #eee; padding: 1em; margin: 1em 0; }
-  .card-body { margin-top: 1em; }
-</style>
 ```
+
+#### Named Slots
+
+You can define multiple slots in a child component by giving each `<slot>` a `name` attribute. The parent can then provide content for each named slot using the `x-slot` directive.
+
+*Child Component (`UserCard.html`):*
+```html
+<template>
+  <div class="user-card">
+    <slot name="avatar"></slot>
+    <div class="info">
+      <slot name="userinfo"></slot>
+    </div>
+    <slot></slot> <!-- default slot -->
+  </div>
+</template>
+```
+
+*Parent Component:*
+```html
+<template>
+  <UserCard>
+    <img x-slot="avatar" src="user.avatar" />
+    <div x-slot="userinfo">{{ user.name }}</div>
+    <p>This goes to the default slot.</p>
+  </UserCard>
+</template>
+```
+
+#### Slot Props
+
+Slots can receive props from the child component. Pass props to a slot by adding attributes starting with `:` to the `<slot>` element in the child. The parent can access these as variables in the slot content.
+
+*Child Component:*
+```html
+<template>
+  <div>
+    <slot name="usercard" :username="user.name" :avatar="user.avatar"></slot>
+  </div>
+</template>
+<script>
+export default function() {
+  return {
+    user: { name: 'Alice', avatar: '/alice.png' }
+  };
+}
+</script>
+```
+
+*Parent Component:*
+```html
+<template>
+  <div x-slot="usercard">
+    <img src="avatar" />
+    <span>{{ username }}</span>
+  </div>
+</template>
+```
+
+**How it works:**
+
+- `<slot name="usercard" :username="user.name" :avatar="user.avatar"></slot>` in the child exposes `username` and `avatar` as slot props.
+- The parent uses `x-slot="usercard"` to provide content for that slot, and can use `username` and `avatar` directly in the slot template.
+
+#### Summary
+
+- `<slot></slot>` defaults to the `children` prop (like `{{ children }}` in React/Vue).
+- Named slots are supported via `<slot name="...">` and `x-slot="..."` in the parent.
+- Slot props are passed from child to parent via `:<prop>="expr"` on `<slot>` and received as variables in the parent slot content.
+- The slot system is fully reactive and supports all BaseDOM features inside slot content.
 
 ---
 

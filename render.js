@@ -2,8 +2,8 @@
 // render.js
 import { findMatchingRoute, parseQuery } from './router.js';
 import { renderComponent, createComponent } from './components.js';
+import { signal } from './state.js';
 import { parseComponent } from './parser.js';
-import { currentView, setCurrentView } from './navigation.js';
 
 
 let errorBoundary = null;
@@ -19,6 +19,7 @@ export function onAfterRender(hook) { hooks.after.push(hook); }
 
 let rootElement = null;
 export let rootElementSelector = '#app';
+const [currentView, setCurrentView] = signal(null);
 let prevRoutes = [];
 const componentCache = new Map();
 
@@ -45,7 +46,6 @@ async function resolveComponent(component) {
 }
 
 
-
 export function initialize(selector = '#app') {
   const el = document.querySelector(selector);
   if (el) {
@@ -53,7 +53,6 @@ export function initialize(selector = '#app') {
     renderComponent(createComponent('div', { children: [currentView] }), rootElement);
   }
 }
-
 
 export function setRootElement(selector) {
   const el = document.querySelector(selector);

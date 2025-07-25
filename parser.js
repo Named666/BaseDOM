@@ -94,7 +94,6 @@ export async function parseComponent(htmlText) {
             }
             // Compose the new script: wrap setup code inside export default function
             finalScript = `\nexport default function(props, ctx) {\n${setupCode}\n  return { ${identifiers.join(', ')} };\n}`;
-            console.log(finalScript);
         }
         const componentModule = await import(`data:text/javascript,${encodeURIComponent(finalScript)}`);
         const componentLogicFn = componentModule.default;
@@ -233,11 +232,6 @@ export function parseNode(node, context, componentStyles = null) {
     if (node.nodeType === Node.TEXT_NODE) return parseTextNode(node.textContent, context);
     if (node.nodeType !== Node.ELEMENT_NODE) return null;
 
-    // Slot handling: if <slot>, return children from context
-    if (node.tagName && node.tagName.toLowerCase() === 'slot') {
-        // Return children from context, or empty string if not present
-        return context && context.children !== undefined ? context.children : '';
-    }
 
     // Check for custom component tag (PascalCase or kebab-case, registered)
     let tagName = node.tagName;
@@ -285,8 +279,8 @@ export function parseNode(node, context, componentStyles = null) {
             }
         }
         // Children as slot (if any)
-        const children = Array.from(node.childNodes).map(child => parseNode(child, context)).filter(child => child !== null && child !== undefined);
-        // Always pass children as array, even if single child
+        // --- Slot system: collect x-slot children ---
+        const children = Array.from(node.childNodes).map(child => parseNode(child, attrs)).filter(child => child !== null && child !== undefined);
         attrs.children = children;
         if (componentStyles) attrs.styles = componentStyles;
         return componentFn(attrs);

@@ -507,7 +507,66 @@ export const defaultDirective = {
     }
 };
 
+// --- Slot Directive Implementation ---
+// Handles <slot> and x-slot in parent templates
+export const slotDirective = {
+    controlFlow: true,
+    handle: ({ node, context }) => {
+        if (!node.tagName || node.tagName.toLowerCase() !== 'slot') return null;
+        // Get slot name (default is 'default')
+        const slotName = node.getAttribute('name') || 'default';
+        // Collect slot props (attributes starting with ':')
+        const slotProps = {};
+        for (const attr of Array.from(node.attributes || [])) {
+            if (attr.name.startsWith(':')) {
+                const propName = attr.name.slice(1);
+                // Evaluate the prop value in the current context
+                slotProps[propName] = _reactive(evaluateExpression(attr.value, context));
+            }
+        }
+        // Find slot content in context
+        const slotContent = context && context.__slots && context.__slots[slotName];
+        if (slotContent) {
+            // Pass slotProps to slot content as context
+            return () => typeof slotContent === 'function' ? slotContent(slotProps) : slotContent;
+        }
+        // Default slot: fallback to children prop or empty
+        if (slotName === 'default') {
+            // Vue: default slot always renders children prop
+            return context && context.children !== undefined ? context.children : '';
+        }
+        return '';
+    }
+};
+
+// <div x-slot="usercard">...</div> registers slot content for <slot name="usercard">
+export const xSlotDirective = {
+    controlFlow: true,
+    handle: ({ node, context, parseNode }) => {
+        if (!node.hasAttribute || !node.hasAttribute('x-slot')) return null;
+        const slotName = node.getAttribute('x-slot') || 'default';
+        // Remove x-slot attribute to avoid recursion
+        const nodeClone = node.cloneNode(true);
+        nodeClone.removeAttribute('x-slot');
+        // Register slot content in context.__slots
+        if (!context.__slots) context.__slots = {};
+        // Slot content is a function that receives slotProps
+        context.__slots[slotName] = (slotProps = {}) => {
+            // Merge slotProps into context for slot content
+            const slotContext = { ...context, ...slotProps };
+            // Remove __slots from slotContext to avoid infinite recursion
+            delete slotContext.__slots;
+            return parseNode(nodeClone, slotContext);
+        };
+        // Do not render this node directly
+        return () => null;
+    }
+};
+
+
 // Register built-in directives
+registerDirective('slot', slotDirective);
+registerDirective('x-slot', xSlotDirective);
 registerDirective('x-if', xIfDirective);
 registerDirective('x-else', xElseDirective);
 registerDirective('x-for', xForDirective);
