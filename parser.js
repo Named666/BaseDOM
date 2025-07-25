@@ -1,11 +1,8 @@
 // parser.js
 import { Element } from './html.js';
-import { signal, effect, computed } from './state.js';
-import { ExpressionParser, expressionParser, _reactive, evaluateExpression } from './expression.js';
+import { computed } from './state.js';
+import { _reactive, evaluateExpression } from './expression.js';
 import { attachLifecycleHooks, wrapReactiveElement } from './lifecycle.js';
-
-
-// --- Core Parsing Logic ---
 
 /**
  * Parses text content for {{...}} interpolation.
@@ -14,47 +11,25 @@ import { attachLifecycleHooks, wrapReactiveElement } from './lifecycle.js';
  * @returns {Function|string} A computed signal if interpolation is found, otherwise the static text.
  */
 function parseTextNode(text, context) {
-    if (!text.includes('{{')) {
-        return text;
-    }
+    if (!text.includes('{{')) return text;
     const regex = /\{\{(.*?)\}\}/g;
     const match = text.trim().match(/^\{\{(.*)\}\}$/);
-
-    // If the text is *only* an interpolation, e.g. "{{ user.name || 'Anonymous' }}"
     if (match) {
         const expr = match[1].trim();
-        return () => {
-            const result = evaluateExpression(expr, context);
-            // Handle reactive values
-            return _reactive(result);
-        };
+        return () => _reactive(evaluateExpression(expr, context));
     }
-
-    // Otherwise, handle mixed text and interpolations
     const parts = [];
-    let lastIndex = 0;
-    let m;
+    let lastIndex = 0, m;
     while ((m = regex.exec(text)) !== null) {
-        if (m.index > lastIndex) {
-            parts.push(text.slice(lastIndex, m.index));
-        }
+        if (m.index > lastIndex) parts.push(text.slice(lastIndex, m.index));
         const expr = m[1].trim();
         parts.push(() => {
-            const value = evaluateExpression(expr, context);
-            const reactiveValue = _reactive(value);
-            
-            // Avoid rendering objects as strings in mixed content
-            if (reactiveValue instanceof HTMLElement || reactiveValue instanceof DocumentFragment) {
-                console.warn(`Cannot render HTML element inside mixed text content for expression: {{${expr}}}. Returning empty string.`);
-                return '';
-            }
-            return reactiveValue !== undefined ? reactiveValue : `{{${expr}}}`;
+            const v = _reactive(evaluateExpression(expr, context));
+            return (v instanceof HTMLElement || v instanceof DocumentFragment) ? '' : (v !== undefined ? v : `{{${expr}}}`);
         });
         lastIndex = regex.lastIndex;
     }
-    if (lastIndex < text.length) {
-        parts.push(text.slice(lastIndex));
-    }
+    if (lastIndex < text.length) parts.push(text.slice(lastIndex));
     return computed(() => parts.map(part => typeof part === 'function' ? part() : part).join(''));
 }
 
@@ -66,76 +41,36 @@ function parseTextNode(text, context) {
 export async function parseComponent(htmlText) {
     try {
         const { template, script, styles } = extractParts(htmlText);
-        // Dynamically import the component's logic
         const componentModule = await import(`data:text/javascript,${encodeURIComponent(script)}`);
         const componentLogicFn = componentModule.default;
-        console.log('Parsed component logic:', componentLogicFn);
-        console.log('Parsed template:', template);
-        console.log('Parsed styles:', styles);
-        // Validate that the component logic is a function
-        if (typeof componentLogicFn !== 'function') {
-            throw new Error('Component script must export a default function');
-        }
-
-        // Create a DOM tree from the template
+        if (typeof componentLogicFn !== 'function') throw new Error('Component script must export a default function');
         const domParser = new DOMParser();
         const doc = domParser.parseFromString(template, 'text/html');
-        // Support multiple root nodes (fragment) for DSL style
         let nodes = Array.from(doc.body.childNodes).filter(n => n.nodeType === Node.ELEMENT_NODE || n.nodeType === Node.TEXT_NODE);
-        
-        // Apply directive preprocessing (e.g., filter out paired x-else nodes)
         nodes = preprocessNodes(nodes);
-
-        // Cache component instances to prevent signal re-creation
         let cachedContext = null;
-        let propsVersion = 0;
-        
         return (props) => {
-            // Simple versioning approach - only recreate if props reference changes
             const currentProps = props || {};
             if (!cachedContext || currentProps !== cachedContext.__lastProps) {
                 cachedContext = componentLogicFn(currentProps);
                 cachedContext.__lastProps = currentProps;
             }
-            const context = cachedContext;
-            
-            // Extract lifecycle hooks from context if they exist
-            const { onMount, onUnmount, onUpdate, ...otherContext } = context;
+            const { onMount, onUnmount, onUpdate, ...otherContext } = cachedContext;
             const lifecycleHooks = { onMount, onUnmount, onUpdate };
-            
             if (nodes.length === 1) {
-                // Single root node - apply styles and lifecycle hooks to it
                 const element = parseNode(nodes[0], otherContext, styles);
                 return attachLifecycleHooksToElement(element, lifecycleHooks);
             } else if (nodes.length > 1) {
-                // Multiple root nodes - wrap in a fragment with styles and lifecycle hooks applied to wrapper
                 const children = nodes.map(n => parseNode(n, otherContext)).filter(Boolean);
-                const wrapperOptions = { children };
-                if (styles) {
-                    wrapperOptions.styles = styles;
-                }
-                // Attach lifecycle hooks to the wrapper
-                Object.assign(wrapperOptions, lifecycleHooks);
-                return Element('div')(wrapperOptions);
+                return Element('div')({ children, ...(styles && { styles }), ...lifecycleHooks });
             } else {
-                // No nodes found
-                const noContentOptions = { children: 'No content' };
-                if (styles) {
-                    noContentOptions.styles = styles;
-                }
-                Object.assign(noContentOptions, lifecycleHooks);
-                return Element('div')(noContentOptions);
+                return Element('div')({ children: 'No content', ...(styles && { styles }), ...lifecycleHooks });
             }
         };
     } catch (error) {
-        console.error('Error parsing component:', error);
-        // Return a component that displays the error
         return () => Element('div')({
             style: { color: 'red', border: '1px solid red', padding: '10px' },
-            children: [
-                Element('h3')('Component Parse Error'),
-                Element('pre')(error.message)
-            ]
+            children: [Element('h3')('Component Parse Error'), Element('pre')(error.message)]
         });
     }
 }
@@ -146,157 +81,110 @@ export async function parseComponent(htmlText) {
  * @returns {{template: string, script: string, styles: string}}
  */
 function extractParts(htmlText) {
-    // Normalize line endings
     htmlText = htmlText.replace(/\r\n?/g, '\n');
-    // Find <template>, <script>, and <style> tags (case-insensitive)
     const templateMatch = htmlText.match(/<template>([\s\S]*?)<\/template>/i);
     const scriptMatch = htmlText.match(/<script>([\s\S]*?)<\/script>/i);
     const styleMatch = htmlText.match(/<style>([\s\S]*?)<\/style>/i);
-
-    let template = '';
-    let script = '';
-    let styles = '';
-
+    let template = '', script = '', styles = '';
     if (templateMatch) {
-        // SFC style: <template>...</template><script>...</script><style>...</style>
         template = templateMatch[1].trim();
-        if (scriptMatch) {
-            script = scriptMatch[1].trim();
-        }
-        if (styleMatch) {
-            styles = styleMatch[1].trim();
-        }
+        if (scriptMatch) script = scriptMatch[1].trim();
+        if (styleMatch) styles = styleMatch[1].trim();
     } else if (scriptMatch) {
-        // DSL style: everything before <script> is template
         const scriptStart = scriptMatch.index;
         template = htmlText.slice(0, scriptStart).trim();
         script = scriptMatch[1].trim();
-        // Still check for styles in DSL mode
-        if (styleMatch) {
-            styles = styleMatch[1].trim();
-        }
+        if (styleMatch) styles = styleMatch[1].trim();
     } else {
-        // No script tag, treat all as template (but still check for styles)
         template = htmlText.trim();
         script = 'export default function(props) { return {}; }';
         if (styleMatch) {
             styles = styleMatch[1].trim();
-            // Remove the <style> block from template since we extracted it
             template = template.replace(/<style>[\s\S]*?<\/style>/i, '').trim();
         }
     }
-
-    // If template is empty, fallback
     if (!template) template = '<div>Template not found</div>';
-
     return { template, script, styles };
 }
 
-
-// --- Modular Directive Registry ---
-
+/**
+ * Registry for custom directives used in parsing and rendering.
+ */
 const directiveRegistry = new Map();
 
-// Register a directive handler with type information
+/**
+ * Registers a directive handler.
+ * @param {string} name - The directive name.
+ * @param {object} handler - The directive handler object.
+ */
 export function registerDirective(name, handler) {
     directiveRegistry.set(name, handler);
 }
 
-// Preprocess nodes using directive preprocessors
+/**
+ * Preprocesses nodes using registered directive preprocessors.
+ * @param {Array} nodes - Array of DOM nodes.
+ * @returns {Array} Processed nodes.
+ */
 function preprocessNodes(nodes) {
-    let processedNodes = nodes;
-    
-    // Apply preprocessing from all registered directives that have a preprocess function
-    for (const [name, directive] of directiveRegistry) {
-        if (directive.preprocess && typeof directive.preprocess === 'function') {
-            processedNodes = directive.preprocess(processedNodes);
-        }
+    for (const directive of directiveRegistry.values()) {
+        if (typeof directive.preprocess === 'function') nodes = directive.preprocess(nodes);
     }
-    
-    return processedNodes;
+    return nodes;
 }
 
-// Helper function to attach lifecycle hooks to parsed elements using unified system
-function attachLifecycleHooksToElement(element, lifecycleHooks) {
-    const { onMount, onUnmount, onUpdate } = lifecycleHooks;
-    
-    if (typeof element === 'function') {
-        // For reactive elements, use the unified wrapper system
-        return wrapReactiveElement(element, { onMount, onUnmount, onUpdate });
-    } else if (element instanceof HTMLElement) {
-        // For static elements, attach directly using unified system
-        return attachLifecycleHooks(element, { onMount, onUnmount, onUpdate });
-    }
-    
+/**
+ * Attaches lifecycle hooks to a parsed element using the unified system.
+ * @param {HTMLElement|Function} element - The element or reactive function.
+ * @param {object} hooks - Lifecycle hooks.
+ * @returns {HTMLElement|Function}
+ */
+function attachLifecycleHooksToElement(element, { onMount, onUnmount, onUpdate }) {
+    if (typeof element === 'function') return wrapReactiveElement(element, { onMount, onUnmount, onUpdate });
+    if (element instanceof HTMLElement) return attachLifecycleHooks(element, { onMount, onUnmount, onUpdate });
     return element;
 }
 
-// Process directives on a node with a standardized interface
+/**
+ * Processes directives on a node with a standardized interface.
+ * Handles control flow and attribute directives.
+ * @param {Node} node - The DOM node.
+ * @param {object} context - The component context.
+ * @param {object} parsingContext - Additional parsing context.
+ * @returns {Function|object} Returns a function for control flow, or props for attributes.
+ */
 function processDirectives(node, context, parsingContext) {
-    // First pass: Check if any control flow directive wants to handle this node
-    for (const [name, directive] of directiveRegistry) {
+    for (const directive of directiveRegistry.values()) {
         if (directive.controlFlow) {
-            // Check if this directive applies to this node
             const result = directive.handle({ node, context, ...parsingContext });
-            if (result !== null) {
-                return result; // Control flow directive handled the node
-            }
+            if (result !== null) return result;
         }
     }
-
-    // Second pass: No control flow directive handled the node, process attribute directives
     const props = { attrs: {} };
-    
-    // Process all non-control-flow directives
-    for (const [name, directive] of directiveRegistry) {
-        if (!directive.controlFlow) {
-            directive.handle({ node, context, ...parsingContext }, props);
-        }
+    for (const directive of directiveRegistry.values()) {
+        if (!directive.controlFlow) directive.handle({ node, context, ...parsingContext }, props);
     }
-    
     return props;
 }
 
-
-// --- Node Parsing ---
-
+/**
+ * Recursively parses a DOM node into a BaseDOM component.
+ * @param {Node} node - The DOM node to parse.
+ * @param {object} context - The component context.
+ * @param {string|null} componentStyles - Optional scoped CSS styles.
+ * @returns {HTMLElement|Function|null} The parsed component or null.
+ */
 export function parseNode(node, context, componentStyles = null) {
-    if (node.nodeType === Node.TEXT_NODE) {
-        return parseTextNode(node.textContent, context);
-    }
+    if (node.nodeType === Node.TEXT_NODE) return parseTextNode(node.textContent, context);
     if (node.nodeType !== Node.ELEMENT_NODE) return null;
-    
-    // Create parsing context that directives can use
     const parsingContext = {
         parseNode: (n, ctx) => parseNode(n, ctx || context),
         componentStyles
     };
-    
-    // Process directives - they handle control flow and attribute processing
     const directiveResult = processDirectives(node, context, parsingContext);
-    
-    // If a control flow directive handled the node, return its result
-    if (directiveResult && typeof directiveResult === 'function') {
-        return directiveResult;
-    }
-    
-    // Otherwise, build a regular element using the props from attribute directives
+    if (typeof directiveResult === 'function') return directiveResult;
     const props = directiveResult || { attrs: {} };
-    const children = [];
-    const tagName = node.tagName.toLowerCase();
-
-    // Add component styles to the root element if this is the first element being parsed
-    if (componentStyles) {
-        props.styles = componentStyles;
-    }
-
-    // Process child nodes
-    const childNodes = Array.from(node.childNodes);
-    for (const child of childNodes) {
-        const parsedChild = parseNode(child, context);
-        if (parsedChild) children.push(parsedChild);
-    }
-
-    const componentFactory = Element(tagName);
-    return componentFactory({ ...props, children });
+    if (componentStyles) props.styles = componentStyles;
+    const children = Array.from(node.childNodes).map(child => parseNode(child, context)).filter(Boolean);
+    return Element(node.tagName.toLowerCase())({ ...props, children });
 }

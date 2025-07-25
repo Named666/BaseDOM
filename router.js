@@ -1,192 +1,155 @@
 // router.js
+// Core router for SPA navigation and route matching
 import { renderRoute } from './render.js';
-import { attachLinkInterception, navigate } from './navigation.js'; // Add this import
+import { attachLinkInterception, navigate } from './navigation.js';
 
 export const routes = [];
 
 /**
- * Defines a route configuration and adds it to the global routes array.
- * When called recursively for child routes, it returns the processed route object
- * without adding it to the global array.
- * @param {object|string} config - Route configuration or path string.
- * @param {function} componentFn - The component function to render.
+ * Defines a route and its children, adding to the global routes array if top-level.
+ * @param {object|string} config - Route config or path string.
+ * @param {function} componentFn - Component function to render.
  * @param {object} [guards={}] - Route-specific navigation guards.
- * @param {boolean} [isChild=false] - Internal flag to indicate if it's a child route.
- * @param {object} [inheritedMeta={}] - Meta information inherited from parent routes.
+ * @param {boolean} [isChild=false] - Internal flag for child routes.
+ * @param {object} [inheritedMeta={}] - Meta inherited from parent routes.
  * @returns {object} The processed route object.
  */
 function defineRoute(config, componentFn, guards = {}, isChild = false, inheritedMeta = {}) {
-    // Normalize input to always be an object for consistency
-    const routeConfig = typeof config === 'string' ?
-        { path: config, component: componentFn, guards } :
-        { ...config, component: config.component || componentFn, guards: config.guards || {} };
-    // Extract parent meta if available, otherwise use an empty object
-    const currentRouteConfigMeta = routeConfig.meta || {};
+  // Normalize config
+  const routeConfig = typeof config === 'string'
+    ? { path: config, component: componentFn, guards }
+    : { ...config, component: config.component || componentFn, guards: config.guards || {} };
+  const combinedMeta = { ...inheritedMeta, ...(routeConfig.meta || {}) };
+  const { path, component, children } = routeConfig;
 
-    // Extract child meta if available, otherwise use an empty object
-    const combinedCurrentMeta = { ...inheritedMeta, ...currentRouteConfigMeta };
-    const { path, component, children } = routeConfig;
+  // Path normalization
+  const normalizedPath = isChild
+    ? (path === '/' ? '' : path.replace(/^\/+/, '').replace(/\/+$/, ''))
+    : (path.startsWith('/') ? path : `/${path}`);
+  const finalPath = normalizedPath === '/' ? '/' : normalizedPath.replace(/\/$/, '').replace(/\/\//g, '/');
 
-    // Normalize path to remove trailing slash unless it's the root path "/"
-    // For child routes, don't add leading slash - they should be relative to parent
-    // For parent routes, ensure they start with slash
-    const normalizedPath = isChild ? 
-        (path === '/' ? '' : path.replace(/^\/+/, '').replace(/\/+$/, '')) :
-        (path.startsWith('/') ? path : `/${path}`);
-    const finalPath = normalizedPath === '/' ? '/' : normalizedPath.replace(/\/$/, '').replace(/\/\//g, '/');
+  // Param extraction
+  const paramNames = [];
+  const regex = new RegExp(
+    '^' + finalPath
+      .replace(/\/+$/, '')
+      .replace(/\/:\w+\?/g, (_, name) => { paramNames.push(name); return '(?:/([^/]+))?'; })
+      .replace(/:(\w+)/g, (_, name) => { paramNames.push(name); return '([^/]+)'; })
+      .replace(/\*([\w]+)$/g, (_, name) => { paramNames.push(name); return '(.*)'; })
+    + (isChild ? '' : '/?') + (children?.length ? '' : '$')
+  );
 
-    const paramNames = [];
+  // Child route construction
+  function joinPaths(parent, child) {
+    if (!child) return parent;
+    if (parent === '/') return '/' + child.replace(/^\//, '');
+    return parent.replace(/\/$/, '') + '/' + child.replace(/^\//, '');
+  }
 
-    const regex = new RegExp(
-      '^' + finalPath
-        .replace(/\/+$/, '')                       // Remove trailing slashes
-        .replace(/\/:(\w+)\?/g, (_, name) => {     // Optional parameters like `:id?`
-          paramNames.push(name);
-          return '(?:/([^/]+))?';
-        })
-        .replace(/:(\w+)/g, (_, name) => {         // Required parameters
-          paramNames.push(name);
-          return '([^/]+)';
-        })
-        .replace(/\*([\w]+)$/g, (_, name) => {     // Wildcard/catch-all at the end
-          paramNames.push(name);
-          return '(.*)';
-        }) + (isChild ? '' : '/?') + (children && children.length > 0 ? '' : '$')  // For parent routes with children, don't end with $
-    );
-
-    function joinPaths(parent, child) {
-      if (!child) return parent;
-      if (parent === '/') return '/' + child.replace(/^\//, '');
-      return parent.replace(/\/$/, '') + '/' + child.replace(/^\//, '');
-    }
-
-    const routeObject = {
-        path: finalPath,
-        regex,
-        componentFn: routeConfig.component, // Make sure we're getting the component from routeConfig
-        paramNames,
-        guards: routeConfig.guards || {},
-        meta: combinedCurrentMeta,
-        children: children?.map(child => {
-            // When recursively calling defineRoute, pass the component properly
-            const childRoute = defineRoute(
-                child,
-                child.component, // This ensures child.component is used 
-                child.guards,
-                true,
-                combinedCurrentMeta
-            );
-            // Construct full path for debugging/reference, ensuring no double slashes
-            childRoute.fullPath = joinPaths(finalPath, childRoute.path);
-
-            return childRoute;
-        }) || []
-    };
-
-    if (!isChild) {
-        routes.push(routeObject);
-    }
-    // Return the processed route object, useful for the recursive call
-    return routeObject;
+  const routeObject = {
+    path: finalPath,
+    regex,
+    componentFn: routeConfig.component,
+    paramNames,
+    guards: routeConfig.guards || {},
+    meta: combinedMeta,
+    children: children?.map(child => {
+      const childRoute = defineRoute(child, child.component, child.guards, true, combinedMeta);
+      childRoute.fullPath = joinPaths(finalPath, childRoute.path);
+      return childRoute;
+    }) || []
+  };
+  if (!isChild) routes.push(routeObject);
+  return routeObject;
 }
-
-// Export the function for user consumption
 export { defineRoute };
 
 /**
- * Recursively attempts to match a given path against a list of routes.
- * @param {string} path - The full path to match.
- * @param {Array} routeList - The list of routes (top-level or children).
- * @param {string} currentMatchedPathSegment - The path segment matched so far by parents.
- * @returns {object|null} An object containing matched routes and params, or null if no match.
+ * Recursively matches a path against nested routes.
+ * @param {string} path - Path to match.
+ * @param {Array} routeList - List of routes.
+ * @param {string} currentMatchedPathSegment - Path matched so far.
+ * @returns {object|null} Matched routes and params, or null.
  */
 function matchNestedRoute(path, routeList = routes, currentMatchedPathSegment = '') {
-    //console.debug(`Available routes:`, routeList.map(r => r.path));
-    
-    // Normalize path to match, ensure it starts with / and no trailing slash unless it's "/"
-    const normalizedPathToMatch = path === '/' ? '/' : path.replace(/\/$/, '');
-    
-    for (const route of routeList) {
-        const remainingPath = normalizedPathToMatch.substring(currentMatchedPathSegment.length);
-        const pathToTest = currentMatchedPathSegment === '' ? normalizedPathToMatch : remainingPath;
-        const match = pathToTest.match(route.regex);
-        if (match) {
-            const matchedSegment = match[0];
-            const params = {};
-            route.paramNames.forEach((name, i) => {
-                params[name] = match[i + 1];
-            });
-            const newMatchedPathSegment = currentMatchedPathSegment + matchedSegment;
-            const stillRemainingPath = normalizedPathToMatch.substring(newMatchedPathSegment.length);
-            const hasMorePath = stillRemainingPath.length > 0 && stillRemainingPath !== '/';
-            if (!hasMorePath) {
-                // Exact match - check if there's an index child route
-                if (route.children?.length) {
-                    const indexChild = route.children.find(child => child.path === '' || child.path === '/');
-                    if (indexChild) {
-                        return {
-                            matched: [{ route, params }, { route: indexChild, params: {} }],
-                            params: { ...params }
-                        };
-                    }
-                }
-                return {
-                    matched: [{ route, params }],
-                    params
-                };
-            }
-            // Recursively match child routes
-            if (route.children?.length) {
-                const childMatch = matchNestedRoute(normalizedPathToMatch, route.children, newMatchedPathSegment);
-                if (childMatch) {
-                    return {
-                        matched: [{ route, params }, ...childMatch.matched],
-                        params: { ...params, ...childMatch.params }
-                    };
-                }
-            }
-            // Wildcard match returns here too
-            if (route.path.includes('*') && route.paramNames.length) {
-                return {
-                    matched: [{ route, params }],
-                    params
-                };
-            }
+  const normalizedPath = path === '/' ? '/' : path.replace(/\/$/, '');
+  for (const route of routeList) {
+    const remainingPath = normalizedPath.substring(currentMatchedPathSegment.length);
+    const pathToTest = currentMatchedPathSegment === '' ? normalizedPath : remainingPath;
+    const match = pathToTest.match(route.regex);
+    if (match) {
+      const matchedSegment = match[0];
+      const params = {};
+      route.paramNames.forEach((name, i) => { params[name] = match[i + 1]; });
+      const newMatchedPathSegment = currentMatchedPathSegment + matchedSegment;
+      const stillRemainingPath = normalizedPath.substring(newMatchedPathSegment.length);
+      const hasMorePath = stillRemainingPath.length > 0 && stillRemainingPath !== '/';
+      if (!hasMorePath) {
+        // Exact match, check for index child
+        if (route.children?.length) {
+          const indexChild = route.children.find(child => child.path === '' || child.path === '/');
+          if (indexChild) {
+            return { matched: [{ route, params }, { route: indexChild, params: {} }], params: { ...params } };
+          }
         }
+        return { matched: [{ route, params }], params };
+      }
+      // Recursively match child routes
+      if (route.children?.length) {
+        const childMatch = matchNestedRoute(normalizedPath, route.children, newMatchedPathSegment);
+        if (childMatch) {
+          return { matched: [{ route, params }, ...childMatch.matched], params: { ...params, ...childMatch.params } };
+        }
+      }
+      // Wildcard match
+      if (route.path.includes('*') && route.paramNames.length) {
+        return { matched: [{ route, params }], params };
+      }
     }
-    return null;
+  }
+  return null;
 }
 
+/**
+ * Parses a query string into an object.
+ * @param {string} queryString
+ * @returns {object}
+ */
 export function parseQuery(queryString) {
-    const params = new URLSearchParams(queryString);
-    const query = {};
-    for (const [key, value] of params.entries()) {
-        query[key] = value;
-    }
-    return query;
+  const params = new URLSearchParams(queryString);
+  const query = {};
+  for (const [key, value] of params.entries()) query[key] = value;
+  return query;
 }
 
+/**
+ * Finds the first matching route for a given path.
+ * @param {string} path
+ * @returns {object|null}
+ */
 export function findMatchingRoute(path) {
-    const [cleanPath, queryString] = path.split('?');
-    const result = matchNestedRoute(cleanPath, routes);
-    const query = parseQuery(queryString || '');
-
-    if (result) {
-        const combinedMeta = result.matched.reduce((acc, { route }) => ({ ...acc, ...route.meta }), {});
-        return {
-            path: cleanPath,
-            matched: result.matched,
-            params: result.params,
-            query,
-            meta: combinedMeta,
-        };
-    }
-    return null;
+  const [cleanPath, queryString] = path.split('?');
+  const result = matchNestedRoute(cleanPath, routes);
+  const query = parseQuery(queryString || '');
+  if (result) {
+    const combinedMeta = result.matched.reduce((acc, { route }) => ({ ...acc, ...route.meta }), {});
+    return {
+      path: cleanPath,
+      matched: result.matched,
+      params: result.params,
+      query,
+      meta: combinedMeta,
+    };
+  }
+  return null;
 }
 
+/**
+ * Initializes router: popstate and link interception.
+ */
 export function startRouter() {
-    window.addEventListener("popstate", () =>
-        navigate(location.pathname + location.search, { triggeredByPopstate: true })
-    );
-    attachLinkInterception();
+  window.addEventListener('popstate', () => {
+    navigate(location.pathname + location.search, { triggeredByPopstate: true });
+  });
+  attachLinkInterception();
 }

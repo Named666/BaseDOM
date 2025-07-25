@@ -1,13 +1,14 @@
 // components.js
 import { effect } from './state.js';
-import { 
-  attachLifecycleHooks, 
-  callOnMountRecursive, 
-  callOnUnmountRecursive, 
+import {
+  attachLifecycleHooks,
+  callOnMountRecursive,
+  callOnUnmountRecursive,
   replaceContent,
-  safeAppendElement 
+  safeAppendElement
 } from './lifecycle.js';
 
+// Utility: Generate a scoped class name from a string
 function hashString(str) {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
@@ -34,36 +35,21 @@ const injectedStyles = new Set();
  * @returns {HTMLElement} The HTML element representation of the component.
  */
 export function createComponent(tag, options = {}) {
-  const processedOptions = typeof options === 'object' && !Array.isArray(options)
-    ? options
-    : { children: options };
-
-  const {
-    attrs = {},
-    children = [],
-    styles = "",
-    onMount,
-    onUnmount,
-    onUpdate,
-    onSubmit
-  } = processedOptions;
-
+  // Normalize options
+  const opts = typeof options === 'object' && !Array.isArray(options) ? options : { children: options };
+  const { attrs = {}, children = [], styles = '', onMount, onUnmount, onUpdate, onSubmit } = opts;
   const element = document.createElement(tag);
 
-  // Collect all attributes and event handlers from both `attrs` and the top-level options
+  // Merge event handlers from attrs and top-level options
   const allAttrs = { ...attrs };
-  for (const key in processedOptions) {
-    if (key.startsWith('on') && typeof processedOptions[key] === 'function') {
-      // Exclude special lifecycle hooks that are not DOM events
-      if (key !== 'onMount' && key !== 'onUnmount' && key !== 'onUpdate') {
-        allAttrs[key] = processedOptions[key];
-      }
+  for (const key in opts) {
+    if (key.startsWith('on') && typeof opts[key] === 'function' && !['onMount', 'onUnmount', 'onUpdate'].includes(key)) {
+      allAttrs[key] = opts[key];
     }
   }
 
-  // handle <form> submit with preventDefault
+  // <form> submit handler
   if (tag === 'form' && typeof onSubmit === 'function') {
-    // remove any raw attrs.onSubmit so applyAttribute won’t double-attach
     delete allAttrs.onSubmit;
     element.addEventListener('submit', e => {
       e.preventDefault();
@@ -71,35 +57,25 @@ export function createComponent(tag, options = {}) {
     });
   }
 
-  const effectsToCleanup = []; // Store cleanup functions for effects
-
-  // Helper to apply attributes reactively
+  // Attribute application (reactive and static)
+  const effectsToCleanup = [];
   const applyAttribute = (el, key, value) => {
     if (key.startsWith('on') && typeof value === 'function') {
-      // Normalize event name: onInput -> input, onPointerDown -> pointerdown
-      let eventName = key.slice(2).toLowerCase();
-      // Remove any previous handler before adding the new one
+      const eventName = key.slice(2).toLowerCase();
       const handlerProp = `__${eventName}_handler`;
-      if (el[handlerProp]) {
-        el.removeEventListener(eventName, el[handlerProp]);
-      }
-      console.log(`[createComponent] Attaching event handler:`, { eventName, element: el, handler: value });
+      if (el[handlerProp]) el.removeEventListener(eventName, el[handlerProp]);
       el.addEventListener(eventName, value);
       el[handlerProp] = value;
     } else if (key === 'class' && typeof value === 'object') {
-      const updateClass = () => {
-        el.className = Object.entries(value).filter(([, val]) => {
-          return typeof val === 'function' ? val() : val;
-        }).map(([k]) => k).join(" ");
-      };
-      effectsToCleanup.push(effect(updateClass));
+      effectsToCleanup.push(effect(() => {
+        el.className = Object.entries(value).filter(([, v]) => typeof v === 'function' ? v() : v).map(([k]) => k).join(' ');
+      }));
     } else if (key === 'style' && typeof value === 'object') {
-      const updateStyle = () => {
+      effectsToCleanup.push(effect(() => {
         for (const [styleKey, styleValue] of Object.entries(value)) {
           el.style[styleKey] = typeof styleValue === 'function' ? styleValue() : styleValue;
         }
-      };
-      effectsToCleanup.push(effect(updateStyle));
+      }));
     } else if (typeof value === 'function') {
       effectsToCleanup.push(effect(() => {
         const val = value();
@@ -117,22 +93,15 @@ export function createComponent(tag, options = {}) {
       el.setAttribute(key, value);
     }
   };
-
-  // Apply attributes
-  for (const [key, value] of Object.entries(allAttrs)) {
-    applyAttribute(element, key, value);
-  }
+  Object.entries(allAttrs).forEach(([key, value]) => applyAttribute(element, key, value));
 
   // Scoped styles
-  let scopedClass = null;
-  if (styles && typeof styles === "string" && styles.trim()) {
+  if (styles && typeof styles === 'string' && styles.trim()) {
     const styleHash = hashString(styles);
-    scopedClass = styleHash;
     if (!injectedStyles.has(styleHash)) {
-      // Helper to prefix selectors with the scoped class
+      // Prefix selectors and keyframes
       function prefixSelectors(css, className) {
-        // 1. Scope @keyframes names
-        // Find all @keyframes names and replace them with a scoped version
+        // Scope @keyframes names
         const keyframesRegex = /@(?:-webkit-|-moz-|-o-)?keyframes\s+([a-zA-Z0-9_-]+)/g;
         const keyframesNames = [];
         const scopedKeyframesCSS = css.replace(keyframesRegex, (match, name) => {
@@ -140,93 +109,67 @@ export function createComponent(tag, options = {}) {
           keyframesNames.push({ original: name, scoped: scopedName });
           return match.replace(name, scopedName);
         });
-
-        // Temporarily remove @keyframes blocks to avoid replacing names inside them
+        // Remove @keyframes blocks
         const keyframesBlocks = [];
-        let tempCss = scopedKeyframesCSS.replace(/@(?:-webkit-|-moz-|-o-)?keyframes[^{]+{[\s\S]*?}}/g, (match) => {
+        let tempCss = scopedKeyframesCSS.replace(/@(?:-webkit-|-moz-|-o-)?keyframes[^{]+{[\s\S]*?}}/g, match => {
           keyframesBlocks.push(match);
-          return "/*__KEYFRAME_PLACEHOLDER__*/";
+          return '/*__KEYFRAME_PLACEHOLDER__*/';
         });
-
-        // 2. Replace animation-name and animation properties to use scoped names
-        if (keyframesNames.length > 0) {
-          keyframesNames.forEach(({ original, scoped }) => {
-            // This regex is simpler and more robust. It replaces the name if it's not preceded
-            // by characters that would indicate it's a definition (like in @keyframes name).
-            // It looks for the name as a whole word.
-            const nameRegex = new RegExp(`\\b${original}\\b`, 'g');
-            tempCss = tempCss.replace(nameRegex, scoped);
-          });
-        }
-
+        // Replace animation names
+        keyframesNames.forEach(({ original, scoped }) => {
+          const nameRegex = new RegExp(`\\b${original}\\b`, 'g');
+          tempCss = tempCss.replace(nameRegex, scoped);
+        });
         // Restore keyframes blocks
         keyframesBlocks.forEach(block => {
-          tempCss = tempCss.replace("/*__KEYFRAME_PLACEHOLDER__*/", block);
+          tempCss = tempCss.replace('/*__KEYFRAME_PLACEHOLDER__*/', block);
         });
         css = tempCss;
-
-
-        // Prefix top-level selectors
+        // Prefix selectors
         css = css.replace(/(^|\})\s*([^{@}][^{]*)\{/g, (match, brace, selector) => {
-          // Only prefix if not an at-rule
           const selectors = selector.split(',').map(sel => {
             sel = sel.trim();
             if (!sel) return '';
-            // Handle '&' for styling the host element itself
-            if (sel.startsWith('&')) {
-              return `.${className}${sel.substring(1)}`;
-            }
-            // Don't double-prefix if already present
+            if (sel.startsWith('&')) return `.${className}${sel.substring(1)}`;
             if (sel.startsWith(`.${className}`)) return sel;
             return `.${className} ${sel}`;
           });
           return `${brace} ${selectors.join(', ')}{`;
         });
-
-        // Prefix selectors inside @media and @supports blocks
+        // Prefix selectors in @media/@supports
         css = css.replace(/(@media[^{]+{[\s\S]*?})/g, block => {
           return block.replace(/([^{@}][^{]*)\{/g, (match, selector) => {
             const selectors = selector.split(',').map(sel => {
               sel = sel.trim();
               if (!sel) return '';
-              // Handle '&' for styling the host element itself
-              if (sel.startsWith('&')) {
-                  return `.${className}${sel.substring(1)}`;
-              }
+              if (sel.startsWith('&')) return `.${className}${sel.substring(1)}`;
               if (sel.startsWith(`.${className}`)) return sel;
               return `.${className} ${sel}`;
             });
             return `${selectors.join(', ')}{`;
           });
         });
-
-        // No longer need to process keyframes blocks separately here
         return css;
       }
-
       const scopedCSS = prefixSelectors(styles, styleHash);
       const styleTag = document.createElement('style');
       styleTag.textContent = scopedCSS;
       document.head.appendChild(styleTag);
       injectedStyles.add(styleHash);
     }
-    // Add the class to the element
-    element.classList.add(scopedClass);
+    element.classList.add(styleHash);
   }
 
-  // Process children
-  const appendChild = (child) => {
-    if (typeof child === "function") {
-      const marker = document.createTextNode(''); // Stable placeholder
+  // Children
+  const appendChild = child => {
+    if (typeof child === 'function') {
+      const marker = document.createTextNode('');
       element.appendChild(marker);
-
-      let currentChildNodes = []; // Store nodes currently rendered by this reactive child
-      let mountedNodes = new WeakSet(); // Track which nodes have been mounted
-
+      let currentChildNodes = [];
+      let mountedNodes = new WeakSet();
       effectsToCleanup.push(effect(() => {
         const reactiveValue = child();
         let newNodes = [];
-
         if (typeof reactiveValue === 'string' || typeof reactiveValue === 'number') {
           newNodes.push(document.createTextNode(String(reactiveValue)));
         } else if (reactiveValue instanceof HTMLElement) {
@@ -234,54 +177,40 @@ export function createComponent(tag, options = {}) {
         } else if (reactiveValue instanceof DocumentFragment) {
           newNodes = Array.from(reactiveValue.childNodes);
         } else if (reactiveValue === null || typeof reactiveValue === 'undefined') {
-          // Render nothing
-        } else if (typeof reactiveValue === "object" && reactiveValue !== null && reactiveValue.__html) {
+          // nothing
+        } else if (typeof reactiveValue === 'object' && reactiveValue.__html) {
           const tempDiv = document.createElement('div');
           tempDiv.innerHTML = reactiveValue.__html;
           newNodes = Array.from(tempDiv.childNodes);
         } else {
           newNodes.push(document.createTextNode(String(reactiveValue)));
         }
-
-        // Remove old nodes using unified lifecycle system
+        // Remove old nodes
         currentChildNodes.forEach(node => {
-          if (node.nodeType === Node.ELEMENT_NODE) {
-            callOnUnmountRecursive(node);
-          }
-          if (node.parentNode === element) {
-            element.removeChild(node);
-          }
+          if (node.nodeType === Node.ELEMENT_NODE) callOnUnmountRecursive(node);
+          if (node.parentNode === element) element.removeChild(node);
         });
         currentChildNodes = [];
-
-        // Insert new nodes before the marker
+        // Insert new nodes
         newNodes.forEach(newNode => {
           element.insertBefore(newNode, marker);
           currentChildNodes.push(newNode);
-          
-          // Call onMount using unified lifecycle system for element nodes
           if (newNode.nodeType === Node.ELEMENT_NODE && !mountedNodes.has(newNode)) {
             callOnMountRecursive(newNode);
             mountedNodes.add(newNode);
           }
         });
       }));
-
     } else if (child instanceof HTMLElement) {
       element.appendChild(child);
     } else if (child instanceof DocumentFragment) {
       element.appendChild(child.cloneNode(true));
-    } else if (typeof child === "object" && child !== null && child.__html) {
+    } else if (typeof child === 'object' && child !== null && child.__html) {
       const tempDiv = document.createElement('div');
       tempDiv.innerHTML = child.__html;
-      const nodesToAppend = Array.from(tempDiv.childNodes);
-
-      // Append them and attach lifecycle hooks using unified system
-      nodesToAppend.forEach(node => {
+      Array.from(tempDiv.childNodes).forEach(node => {
         element.appendChild(node);
-        // Use unified lifecycle system for HTML nodes with lifecycle hooks
-        if (node.nodeType === Node.ELEMENT_NODE && 
-           (child.__onMount || child.__onUnmount || child.__onUpdate)) {
+        if (node.nodeType === Node.ELEMENT_NODE && (child.__onMount || child.__onUnmount || child.__onUpdate)) {
           attachLifecycleHooks(node, {
             onMount: child.__onMount,
             onUnmount: child.__onUnmount,
@@ -289,63 +218,36 @@ export function createComponent(tag, options = {}) {
           });
         }
       });
-
     } else {
       element.appendChild(document.createTextNode(String(child)));
     }
   };
+  (Array.isArray(children) ? children : [children]).forEach(appendChild);
 
-  if (Array.isArray(children)) {
-    children.forEach(appendChild);
-  } else {
-    appendChild(children);
-  }
-
-  // Attach lifecycle hooks using unified system and include effects cleanup
+  // Unified lifecycle hooks and effect cleanup
   const effectsCleanup = effectsToCleanup.length > 0 ? () => {
     effectsToCleanup.forEach(cleanup => cleanup());
     effectsToCleanup.length = 0;
   } : null;
-
   attachLifecycleHooks(element, {
     onMount,
-    onUnmount: effectsCleanup ? 
-      (onUnmount ? () => { effectsCleanup(); onUnmount(); } : effectsCleanup) :
-      onUnmount,
+    onUnmount: effectsCleanup ? (onUnmount ? () => { effectsCleanup(); onUnmount(); } : effectsCleanup) : onUnmount,
     onUpdate
   });
-
   return element;
 }
 
-// Lifecycle-aware rendering
+/**
+ * Renders a component into a container, handling lifecycle cleanup and mounting.
+ * @param {Function|HTMLElement|DocumentFragment|string|number} component - The component to render.
+ * @param {HTMLElement} container - The container element.
+ */
 export function renderComponent(component, container) {
-  console.log(`Rendering component in container: #${container.id} (${container.tagName})`);
-  
-  // Use the unified lifecycle system for cleanup and mounting
-  replaceContent(container, null); // This handles unmounting existing content
-
-  // Render new component
-  const elementToRender = typeof component === "function" ? component() : component;
-
-  if (elementToRender instanceof HTMLElement || elementToRender instanceof DocumentFragment) {
-    safeAppendElement(container, elementToRender); // This handles mounting
+  replaceContent(container, null); // Unmount existing content
+  const el = typeof component === 'function' ? component() : component;
+  if (el instanceof HTMLElement || el instanceof DocumentFragment) {
+    safeAppendElement(container, el);
   } else {
-    // Handle cases where component might return a string, number, or other primitive
-    container.textContent = String(elementToRender);
+    container.textContent = String(el);
   }
 }
-
-
-// Helper to attach hooks to DOM nodes (Useful for arbitrary HTML or non-createComponent elements)
-export function withLifecycle(html, { onMount, onUnmount, onUpdate } = {}) {
-  return {
-    __html: html,
-    __onMount: onMount,
-    __onUnmount: onUnmount,
-    __onUpdate: onUpdate
-  };
-}
-
-// Re-export triggerUpdate from the unified lifecycle system
-export { triggerUpdate } from './lifecycle.js';
