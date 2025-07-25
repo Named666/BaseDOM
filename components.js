@@ -234,6 +234,16 @@ export function createComponent(tag, options = {}) {
     onUnmount: effectsCleanup ? (onUnmount ? () => { effectsCleanup(); onUnmount(); } : effectsCleanup) : onUnmount,
     onUpdate
   });
+  // If there are effect cleanups, attach them to onUnmount via attachLifecycleHooks
+  if (effectsToCleanup.length > 0) {
+    attachLifecycleHooks(element, {
+      onUnmount: () => {
+        effectsToCleanup.forEach(cleanup => cleanup());
+        effectsToCleanup.length = 0;
+        if (typeof onUnmount === 'function') onUnmount();
+      }
+    });
+  }
   return element;
 }
 

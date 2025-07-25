@@ -1,22 +1,25 @@
 // navigation.js
 
-// SPA navigation and route management
+import { renderRoute } from './render.js';
 import { findMatchingRoute, parseQuery } from './router.js';
-import { renderRoute, escapeHtml, rootElementSelector } from './render.js';
+import { renderComponent, createComponent } from './components.js';
+import { signal } from './state.js';
+import { escapeHtml, rootElementSelector } from './render.js';
+
+// --- Centralized Signals ---
+export const [currentRoute, setCurrentRoute] = signal(null);
+export const [currentView, setCurrentView] = signal(null);
+export const [pendingNavigation, setPendingNavigation] = signal(null);
+export const [errorState, setErrorState] = signal(null);
+export const [scrollPositions, setScrollPositions] = signal({});
 
 // --- Scroll Position Management ---
-const scrollPositions = new Map();
-function saveScrollPosition() {
-  if (navigation.current) {
-    scrollPositions.set(navigation.current, {
-      x: window.scrollX,
-      y: window.scrollY
-    });
-  }
+export function saveScroll(path, x, y) {
+  setScrollPositions({ ...scrollPositions(), [path]: { x, y } });
 }
-function restoreScrollPosition(path) {
-  const pos = scrollPositions.get(path);
-  window.scrollTo(pos?.x ?? 0, pos?.y ?? 0);
+export function restoreScroll(path) {
+  const pos = scrollPositions()[path] || { x: 0, y: 0 };
+  window.scrollTo(pos.x, pos.y);
 }
 
 // --- Global Navigation Guards ---
@@ -24,118 +27,101 @@ const globalGuards = {
   beforeEnter: [],
   beforeLeave: []
 };
-/**
- * Add a global beforeEnter guard.
- */
 export function addGlobalBeforeEnterGuard(fn) {
   globalGuards.beforeEnter.push(fn);
 }
-/**
- * Add a global beforeLeave guard.
- */
 export function addGlobalBeforeLeaveGuard(fn) {
   globalGuards.beforeLeave.push(fn);
 }
-
-/**
- * Run guards sequentially, handle async and cancellation.
- */
 async function runGuards(guards, context) {
   for (const guard of guards) {
     try {
       const result = await guard(context);
       if (result === false || typeof result === 'string') return result;
     } catch (e) {
-      console.error('Guard error:', e);
+      setErrorState(e);
       return false;
     }
   }
   return true;
 }
 
-// --- Navigation State ---
-const navigation = {
-  pending: null,
-  current: null
-};
-
-/**
- * SPA navigation with guards and scroll management.
- * Always uses renderRoute for rendering.
- */
+// --- Navigation ---
 export async function navigate(path, { replace = false, triggeredByPopstate = false } = {}) {
-  if (navigation.pending) throw new Error('Navigation already in progress');
+  if (pendingNavigation()) throw new Error('Navigation already in progress');
   const currentPath = location.pathname + location.search;
   if (path === currentPath && !replace) return;
-  saveScrollPosition();
-  navigation.pending = path;
+  saveScroll(currentPath, window.scrollX, window.scrollY);
+  setPendingNavigation(path);
   try {
-    const currentRoute = findMatchingRoute(currentPath.split('?')[0]);
+    const currentRouteMatch = findMatchingRoute(currentPath.split('?')[0]);
     const [targetPath] = path.split('?');
-    const targetRoute = findMatchingRoute(targetPath);
+    const targetRouteMatch = findMatchingRoute(targetPath);
     const context = {
-      from: currentRoute,
-      to: targetRoute,
+      from: currentRouteMatch,
+      to: targetRouteMatch,
       path,
       query: parseQuery(path.split('?')[1] || '')
     };
     // beforeLeave guards
-    if (currentRoute) {
+    if (currentRouteMatch) {
       const leaveGuards = [
         ...globalGuards.beforeLeave,
-        ...(currentRoute.matched.at(-1)?.route?.guards?.beforeLeave || [])
+        ...(currentRouteMatch.matched.at(-1)?.route?.guards?.beforeLeave || [])
       ];
       const leaveResult = await runGuards(leaveGuards, context);
       if (leaveResult === false) return;
       if (typeof leaveResult === 'string') {
-        navigation.pending = null;
+        setPendingNavigation(null);
         return navigate(leaveResult, { replace: true });
       }
     }
     // beforeEnter guards
-    if (targetRoute) {
+    if (targetRouteMatch) {
       const enterGuards = [
         ...globalGuards.beforeEnter,
-        ...(targetRoute.matched.at(-1)?.route?.guards?.beforeEnter || [])
+        ...(targetRouteMatch.matched.at(-1)?.route?.guards?.beforeEnter || [])
       ];
       const enterResult = await runGuards(enterGuards, context);
       if (enterResult === false) return;
       if (typeof enterResult === 'string') {
-        navigation.pending = null;
+        setPendingNavigation(null);
         return navigate(enterResult, { replace: true });
       }
     }
+    // Render route and update signals
     await renderRoute(path);
     if (!triggeredByPopstate) {
       if (replace) history.replaceState({}, '', path);
       else history.pushState({}, '', path);
     }
-    navigation.current = path;
-    restoreScrollPosition(path);
+    setCurrentRoute(path);
+    restoreScroll(path);
   } catch (err) {
-    console.error('Navigation Error:', err);
-    // Attempt to restore previous route if possible
-    if (navigation.current && navigation.current !== path) {
-      try {
-        await renderRoute(navigation.current);
-      } catch (restoreErr) {
-        const el = document.createElement('div');
-        el.innerHTML = `<h1>Navigation Error</h1><p>${escapeHtml(err.message || 'An unknown error occurred.')}</p>`;
-        renderComponent(el, document.querySelector(rootElementSelector) || document.body);
-      }
-    } else {
-      const el = document.createElement('div');
-      el.innerHTML = `<h1>Navigation Error</h1><p>${escapeHtml(err.message || 'Unknown')}</p>`;
-      renderComponent(el, document.querySelector(rootElementSelector) || document.body);
-    }
+    setErrorState(err);
+    renderErrorView(err);
   } finally {
-    navigation.pending = null;
+    setPendingNavigation(null);
   }
 }
 
-/**
- * Intercept internal link clicks and use SPA navigation.
- */
+
+
+// --- Error View Rendering ---
+function renderErrorView(err) {
+  const rootEl = document.querySelector(rootElementSelector) || document.body;
+  const errorMessage = typeof err === 'string' ? err : err.message || 'An unknown error occurred.';
+  const el = createComponent('div', {
+    children: [
+      createComponent('h1', { children: 'Navigation Error' }),
+      createComponent('p', { children: escapeHtml(errorMessage) })
+    ]
+  });
+  setCurrentView(el);
+  renderComponent(el, rootEl);
+}
+
+// --- Link Interception ---
 export function attachLinkInterception() {
   document.body.addEventListener('click', e => {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;

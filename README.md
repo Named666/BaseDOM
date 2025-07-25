@@ -9,7 +9,6 @@
 6. [API & Features](#api--features)
     - [Lifecycle Hooks](#lifecycle-hooks-lifecyclejs)
     - [Programmatic Components](#programmatic-components-htmljs)
-    - [Keyed List Rendering](#keyed-list-rendering)
     - [Routing](#routing-routerjs)
     - [Form Handling](#form-handling-formjs--validationjs)
     - [Global State](#global-state-createstore)
@@ -297,29 +296,6 @@ function ProgrammaticCounter() {
 }
 ```
 
-### Keyed List Rendering
-
-For efficiently rendering dynamic lists, use the `List` component. It performs keyed reconciliation, ensuring minimal DOM updates (adding, removing, or reordering elements) instead of re-rendering the entire list.
-
-```javascript
-import { ul } from './basedom/html.js';
-import { List } from './basedom/html.js';
-import { signal } from './basedom/state.js';
-
-const [items, setItems] = signal([
-  { id: 1, text: 'First' },
-  { id: 2, text: 'Second' }
-]);
-
-const MyList = () => ul({}, 
-  List(
-    items, // The signal containing the array
-    (item) => item.id, // The key function
-    (item) => li({ key: item.id }, item.text) // The render function for each item
-  )
-);
-```
-
 ### Routing (`router.js`)
 
 BaseDOM includes a powerful file-based router supporting:
@@ -371,30 +347,39 @@ export default function() {
 
 #### Route Guards Example
 
+Route guards are functions that are executed before a route is entered or left. They can be used to protect routes, redirect users, or perform other actions.
+
 ```javascript
 import { defineRoute, navigate } from './basedom/router.js';
+import { store } from './store.js'; // Assuming you have a global store
 
-function authGuard(ctx) {
-  if (!ctx.store.getValue('currentUser')) {
+// This guard checks if a user is authenticated before allowing access to a route.
+function authGuard(to, from) {
+  if (!store.getValue('currentUser')) {
+    // If the user is not logged in, redirect to the login page.
     navigate('/login');
-    return false;
+    return false; // Cancel the navigation
   }
-  return true;
+  return true; // Allow the navigation
 }
 
 defineRoute({
   path: '/dashboard',
   component: './pages/Dashboard.html',
-  guards: [authGuard],
+  guards: {
+    beforeEnter: [authGuard]
+  },
   meta: { requiresAuth: true }
 });
 ```
 
 #### Async Guards Example
 
+Guards can also be asynchronous, allowing you to perform actions like fetching data before a route is rendered.
+
 ```javascript
-async function adminGuard(ctx) {
-  const user = await ctx.store.getValue('currentUser');
+async function adminGuard(to, from) {
+  const user = await store.getValue('currentUser');
   if (!user || !user.isAdmin) {
     navigate('/');
     return false;
@@ -405,14 +390,18 @@ async function adminGuard(ctx) {
 defineRoute({
   path: '/admin',
   component: './pages/Admin.html',
-  guards: [adminGuard]
+  guards: {
+    beforeEnter: [adminGuard]
+  }
 });
 ```
 
 #### Programmatic Navigation
 
+You can navigate programmatically using the `navigate` function.
+
 ```javascript
-import { navigate } from './basedom/router.js';
+import { navigate } from './basedom/navigation.js';
 
 // In a component method
 function goToProfile(id) {
@@ -437,6 +426,8 @@ export default function({ $route }) {
 
 #### Route Meta Usage
 
+You can add metadata to routes, which can be useful for things like setting the document title or controlling access.
+
 ```javascript
 defineRoute({
   path: '/settings',
@@ -446,6 +437,8 @@ defineRoute({
 ```
 
 #### Layouts with Named Outlets
+
+For more complex layouts, you can use named outlets to render different components in different parts of the layout.
 
 ```html
 <template>
@@ -460,6 +453,8 @@ defineRoute({
 ```
 
 ```javascript
+import { defineRoute } from './basedom/router.js';
+
 defineRoute({
   path: '/app',
   component: './layouts/AppLayout.html',
@@ -483,26 +478,56 @@ BaseDOM provides a comprehensive solution for managing forms.
 ```javascript
 import { Form, Field, Submit } from './basedom/form.js';
 import { required, email, minLength, composeValidators } from './basedom/validation.js';
+import { signal } from './basedom/state.js';
 
 function MyForm() {
+  const form = createForm({
+    initialValues: {
+      email: '',
+      password: ''
+    }
+  });
+
+  form.setValidator('email', composeValidators(
+    required('Email is required'),
+    email('Please enter a valid email')
+  ));
+
+  form.setValidator('password', composeValidators(
+    required('Password is required'),
+    minLength(8, 'Password must be at least 8 characters')
+  ));
+
+  const handleSubmit = async (values) => {
+    console.log('Submitting:', values);
+    // Returns a promise to set submitting state
+    return new Promise(resolve => setTimeout(resolve, 1000));
+  };
+
   return Form({
-    // onSubmit is automatically wrapped with validation and state updates
-    onSubmit: (values) => {
-      console.log('Submitting:', values);
-      // Returns a promise to set submitting state
-      return new Promise(resolve => setTimeout(resolve, 1000));
-    },
-    // Define validators directly on the Form component
-    validators: {
-      email: composeValidators(required(), email()),
-      password: composeValidators(required(), minLength(8))
-    },
+    onSubmit: handleSubmit,
     children: [
-      // Fields automatically connect to the form's state
-      Field({ name: 'email', label: 'Email', type: 'email' }),
-      Field({ name: 'password', label: 'Password', type: 'password' }),
-      // Submit button is automatically disabled while submitting
-      Submit({ text: 'Log In', loadingText: 'Logging in...' })
+      Field({
+        label: 'Email',
+        name: 'email',
+        type: 'email',
+        value: form.fields.email,
+        error: form.errors().email,
+        touched: form.touched().email
+      }),
+      Field({
+        label: 'Password',
+        name: 'password',
+        type: 'password',
+        value: form.fields.password,
+        error: form.errors().password,
+        touched: form.touched().password
+      }),
+      Submit({
+        text: 'Log In',
+        loadingText: 'Logging in...',
+        isSubmitting: form.isSubmitting
+      })
     ]
   });
 }
@@ -514,7 +539,7 @@ For complex state shared between components, `createStore` provides a powerful g
 
 **`store.js`**
 ```javascript
-import { createStore } from './basedom/state.js';
+import { createStore } from './basedom/store.js';
 
 export const store = createStore({
   // Simple key-value pairs
@@ -532,7 +557,20 @@ export const store = createStore({
 });
 ```
 
-The store API provides dozens of methods like `getValue`, `setValue`, `getRow`, `setRow`, `transaction`, and listeners (`addValueListener`, `addRowListener`, etc.) for surgical state updates.
+The store API provides dozens of methods like `getValue`, `setValue`, `getRow`, `setRow`, `transaction`, and listeners (`addValueListener`, `addRowListener`, etc.) for surgical state updates. You can also define schemas for your data to ensure type safety and consistency.
+
+**Example of a transaction:**
+
+```javascript
+import { store } from './store.js';
+
+function updateUserAndProduct(userId, newName, productId, newPrice) {
+  store.transaction(() => {
+    store.setPartialRow('users', userId, { name: newName });
+    store.setCell('products', productId, 'price', newPrice);
+  });
+}
+```
 
 ### Declarative AJAX
 
@@ -548,13 +586,21 @@ Fetch content from the server and update the DOM without writing any JavaScript,
 | `x-select="selector"`| Selects a portion of the HTML response to use for the swap. |
 
 **Example:**
+
 ```html
 <!-- Load content into a div when a button is clicked -->
-<div x-target="#content">
-  <button x-get="/api/content" x-swap="innerHTML">Load Content</button>
-</div>
+<button x-get="/api/content" x-target="#content" x-swap="innerHTML">Load Content</button>
+
 <div id="content"></div>
+
+<!-- Load a partial HTML file and replace a specific element -->
+<div id="user-profile">
+  <button x-get="/api/user" x-select="#user-card" x-target="#user-profile" x-swap="outerHTML">
+    Load User Profile
+  </button>
+</div>
 ```
+
 
 ---
 
@@ -564,7 +610,7 @@ We welcome contributions! Please feel free to open an issue or submit a pull req
 
 ### TODO & Roadmap
 
--   [ ] **Declarative Component Imports & Nesting:** The ability to import an SFC into another and use it as a custom tag (e.g., `<MyComponent>`).
+-   [ ] **Declarative Component Imports & Nesting:** The ability to import an SFC into another and use it as a custom tag (e.g., `<MyComponent>`). Some kind of component registry maybe?
 -   [ ] **Transitions:** Add `x-transition` directives for simple CSS transitions.
 -   [ ] **CLI Tool:** A command-line tool for scaffolding new projects and components.
 -   [ ] **Cookbook:** Create a "cookbook" section with recipes for common patterns.

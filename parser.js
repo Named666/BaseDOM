@@ -3,6 +3,7 @@ import { Element } from './html.js';
 import { computed } from './state.js';
 import { _reactive, evaluateExpression } from './expression.js';
 import { attachLifecycleHooks, wrapReactiveElement } from './lifecycle.js';
+import { getComponent } from './registry.js';
 
 /**
  * Parses text content for {{...}} interpolation.
@@ -177,6 +178,67 @@ function processDirectives(node, context, parsingContext) {
 export function parseNode(node, context, componentStyles = null) {
     if (node.nodeType === Node.TEXT_NODE) return parseTextNode(node.textContent, context);
     if (node.nodeType !== Node.ELEMENT_NODE) return null;
+
+    // Slot handling: if <slot>, return children from context
+    if (node.tagName && node.tagName.toLowerCase() === 'slot') {
+        // Return children from context, or empty string if not present
+        return context && context.children !== undefined ? context.children : '';
+    }
+
+    // Check for custom component tag (PascalCase or kebab-case, registered)
+    let tagName = node.tagName;
+    // Support both PascalCase and kebab-case (e.g., UserProfile, user-profile)
+    let registryNames = [tagName, tagName.toLowerCase()];
+    if (tagName.includes('-')) {
+        // Convert kebab-case to PascalCase for registry lookup
+        const pascal = tagName.replace(/(^|\-)([a-z])/g, (_, __, c) => c.toUpperCase());
+        registryNames.push(pascal);
+        registryNames.push(pascal.toLowerCase());
+    }
+    // Try all registry names case-insensitively
+    let componentFn = null;
+    for (const name of registryNames) {
+        componentFn = getComponent(name) || getComponent(name.toLowerCase());
+        if (componentFn) break;
+    }
+    if (componentFn) {
+        // Gather props from attributes
+        const attrs = {};
+        for (const attr of Array.from(node.attributes)) {
+            let val = attr.value;
+            // Support Vue-style :prop="{{ expr }}"
+            if (attr.name.startsWith(':')) {
+                const propName = attr.name.slice(1);
+                if (/^\{\{.*\}\}$/.test(val.trim())) {
+                    // Interpolated expression
+                    val = (() => _reactive(evaluateExpression(val.trim().slice(2, -2), context)));
+                }
+                attrs[propName] = val;
+            }
+        }
+        // Merge props from directives (attribute directives)
+        const parsingContext = {
+            parseNode: (n, ctx) => parseNode(n, ctx || context),
+            componentStyles
+        };
+        const directiveResult = processDirectives(node, context, parsingContext);
+        if (directiveResult && typeof directiveResult === 'object') {
+            // Merge directive props into attrs
+            Object.assign(attrs, directiveResult.attrs || {});
+            // Merge event handlers and other props
+            for (const k of Object.keys(directiveResult)) {
+                if (k !== 'attrs') attrs[k] = directiveResult[k];
+            }
+        }
+        // Children as slot (if any)
+        const children = Array.from(node.childNodes).map(child => parseNode(child, context)).filter(child => child !== null && child !== undefined);
+        // Always pass children as array, even if single child
+        attrs.children = children;
+        if (componentStyles) attrs.styles = componentStyles;
+        return componentFn(attrs);
+    }
+
+    // Normal element
     const parsingContext = {
         parseNode: (n, ctx) => parseNode(n, ctx || context),
         componentStyles
