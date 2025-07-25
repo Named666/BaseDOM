@@ -22,6 +22,14 @@ export function attachLifecycleHooks(element, hooks = {}) {
             element[key] = existing
                 ? (...args) => { try { existing(...args); } catch (e) {} try { hooks[hook](...args); } catch (e) {} }
                 : hooks[hook];
+            // For onUpdate, allow programmatic triggering via element.onUpdate() TODO
+            if (hook === 'onUpdate') {
+                element.onUpdate = (...args) => {
+                    if (typeof element.__onUpdate === 'function') {
+                        element.__onUpdate.apply(element, args);
+                    }
+                };
+            }
         }
     });
     return element;

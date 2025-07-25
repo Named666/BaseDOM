@@ -151,11 +151,42 @@ The core philosophy of BaseDOM is to provide a developer experience that is:
 
 ### Single-File Components (SFCs)
 
+
 Components are `.html` files composed of three optional sections:
 
 -   `<template>`: The HTML structure of your component.
--   `<script>`: The component's logic, written in JavaScript. It must have a `default export` that is a function. This function's return value (an object) exposes data and methods to the template.
+-   `<script>`: The component's logic, written in JavaScript. You can use either a standard script with a `default export` function, or the special `<script setup>` mode (see below).
 -   `<style>`: The component's CSS. These styles are **automatically scoped** to the component.
+
+#### `<script setup>` Mode
+
+You can use `<script setup>` for a more concise and ergonomic way to write component logic, similar to Vue 3's SFCs. In this mode, all top-level variables, functions, and signals you declare are automatically exposed to your template—**including those declared with destructuring** (e.g., `const [count, setCount] = signal(0);`).
+
+**Example:**
+
+```html
+<template>
+  <div>
+    <p>Count: {{ count }}</p>
+    <button @click="increment">+</button>
+  </div>
+</template>
+
+<script setup>
+const [count, setCount] = signal(0);
+function increment() { setCount(count() + 1); }
+</script>
+```
+
+All variables, functions, and signals declared at the top level—whether simple or destructured—are available in your template. This includes:
+
+- Simple declarations: `const foo = ...`, `let bar = ...`, `function baz() {}`
+- Destructured arrays: `const [a, b] = ...`
+- Destructured objects: `const { x, y } = ...`
+
+You do **not** need to manually return an object; everything is exposed automatically.
+
+If you use a regular `<script>` (not setup), you must still export a default function that returns the context object.
 
 ### Component Composition & Nesting
 
@@ -403,7 +434,6 @@ While SFCs are great, you can also create components programmatically in JavaScr
 
 ```javascript
 import { div, p, button } from './basedom/html.js';
-import { signal } from './basedom/state.js';
 
 function ProgrammaticCounter() {
   const [count, setCount] = signal(0);
@@ -607,7 +637,6 @@ BaseDOM provides a comprehensive solution for managing forms.
 ```javascript
 import { Form, Field, Submit } from './basedom/form.js';
 import { required, email, minLength, composeValidators } from './basedom/validation.js';
-import { signal } from './basedom/state.js';
 
 function MyForm() {
   const form = createForm({

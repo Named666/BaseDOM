@@ -20,11 +20,11 @@ function defineRoute(config, componentFn, guards = {}, isChild = false, inherite
     ? { path: config, component: componentFn, guards }
     : { ...config, component: config.component || componentFn, guards: config.guards || {} };
   const combinedMeta = { ...inheritedMeta, ...(routeConfig.meta || {}) };
-  const { path, component, children } = routeConfig;
+  const { path, component, children, scrollBehavior } = routeConfig;
 
   // Path normalization
   const normalizedPath = isChild
-    ? (path === '/' ? '' : path.replace(/^\/+/, '').replace(/\/+$/, ''))
+    ? (path === '/' ? '' : path.replace(/^\/+/,'').replace(/\/+$/,''))
     : (path.startsWith('/') ? path : `/${path}`);
   const finalPath = normalizedPath === '/' ? '/' : normalizedPath.replace(/\/$/, '').replace(/\/\//g, '/');
 
@@ -53,6 +53,7 @@ function defineRoute(config, componentFn, guards = {}, isChild = false, inherite
     paramNames,
     guards: routeConfig.guards || {},
     meta: combinedMeta,
+    scrollBehavior: typeof scrollBehavior === 'function' ? scrollBehavior : undefined,
     children: children?.map(child => {
       const childRoute = defineRoute(child, child.component, child.guards, true, combinedMeta);
       childRoute.fullPath = joinPaths(finalPath, childRoute.path);

@@ -39,10 +39,64 @@ function parseTextNode(text, context) {
  * @param {string} htmlText - The raw text of the .html file.
  * @returns {Function} A function that, when called, returns a BaseDOM component.
  */
+
 export async function parseComponent(htmlText) {
     try {
         const { template, script, styles } = extractParts(htmlText);
-        const componentModule = await import(`data:text/javascript,${encodeURIComponent(script)}`);
+        let finalScript = script;
+        // Detect <script setup> mode
+        const setupMatch = htmlText.match(/<script\s+setup[^>]*>([\s\S]*?)<\/script>/i);
+        if (setupMatch) {
+            // Compose a default export function that exposes all top-level variables/signals
+            let setupCode = setupMatch[1];
+            // Indent all lines by 2 spaces for function body, but preserve empty lines
+            setupCode = setupCode.split('\n').map(line => line.trim() === '' ? '' : '  ' + line).join('\n');
+            // Enhanced: Extract all identifiers from top-level declarations, including destructuring
+            const identifiers = [];
+            // Match top-level const/let/var declarations (no leading whitespace)
+            const declRegex = /^(?:const|let|var)\s+([^=;]+)/gm;
+            let m;
+            while ((m = declRegex.exec(setupMatch[1])) !== null) {
+                const lhs = m[1].trim();
+                // Remove trailing comma if present
+                const cleanLhs = lhs.replace(/,$/, '');
+                // If destructured array: [a, b, ...]
+                if (cleanLhs.startsWith('[')) {
+                    // Remove brackets and split by comma
+                    const arr = cleanLhs.slice(1, -1).split(',').map(s => s.trim()).filter(Boolean);
+                    for (const v of arr) {
+                        // Remove default assignment (a = 1)
+                        const name = v.split('=')[0].trim();
+                        if (name) identifiers.push(name);
+                    }
+                } else if (cleanLhs.startsWith('{')) {
+                    // Remove braces and split by comma
+                    const arr = cleanLhs.slice(1, -1).split(',').map(s => s.trim()).filter(Boolean);
+                    for (const v of arr) {
+                        // Handle renaming: x: y, or default assignment: y = 1
+                        let name = v;
+                        if (v.includes(':')) name = v.split(':')[1].trim();
+                        if (name.includes('=')) name = name.split('=')[0].trim();
+                        if (name) identifiers.push(name);
+                    }
+                } else {
+                    // Simple identifier(s), could be multiple (e.g., let a, b)
+                    const vars = cleanLhs.split(',').map(s => s.trim());
+                    for (const v of vars) {
+                        if (v) identifiers.push(v);
+                    }
+                }
+            }
+            // Also match top-level function and class declarations
+            const fnClassRegex = /^(?:function|class)\s+([\w$]+)/gm;
+            while ((m = fnClassRegex.exec(setupMatch[1])) !== null) {
+                identifiers.push(m[1]);
+            }
+            // Compose the new script: wrap setup code inside export default function
+            finalScript = `\nexport default function(props, ctx) {\n${setupCode}\n  return { ${identifiers.join(', ')} };\n}`;
+            console.log(finalScript);
+        }
+        const componentModule = await import(`data:text/javascript,${encodeURIComponent(finalScript)}`);
         const componentLogicFn = componentModule.default;
         if (typeof componentLogicFn !== 'function') throw new Error('Component script must export a default function');
         const domParser = new DOMParser();

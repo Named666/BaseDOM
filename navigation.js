@@ -96,7 +96,31 @@ export async function navigate(path, { replace = false, triggeredByPopstate = fa
       else history.pushState({}, '', path);
     }
     setCurrentRoute(path);
-    restoreScroll(path);
+
+    // --- Custom scrollBehavior support ---
+    let scrolled = false;
+    if (targetRouteMatch && targetRouteMatch.matched.length) {
+      // Find the deepest matched route with scrollBehavior
+      for (let i = targetRouteMatch.matched.length - 1; i >= 0; i--) {
+        const route = targetRouteMatch.matched[i].route;
+        if (typeof route.scrollBehavior === 'function') {
+          const scrollOptions = route.scrollBehavior({
+            from: currentRouteMatch,
+            to: targetRouteMatch,
+            path,
+            query: parseQuery(path.split('?')[1] || '')
+          });
+          if (scrollOptions && typeof window.scrollTo === 'function') {
+            window.scrollTo(scrollOptions);
+            scrolled = true;
+            break;
+          }
+        }
+      }
+    }
+    if (!scrolled) {
+      restoreScroll(path);
+    }
   } catch (err) {
     setErrorState(err);
     renderErrorView(err);
