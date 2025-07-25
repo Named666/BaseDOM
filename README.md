@@ -34,6 +34,7 @@ The core philosophy of BaseDOM is to provide a developer experience that is:
 
 -   **Signal-based Reactivity**: Fine-grained updates with `signal`, `computed`, and `effect`.
 -   **Single-File Components**: Keep HTML, CSS, and JS in one file with automatic style scoping.
+-   **Component Composition**: Build complex UIs by nesting components declaratively via custom tags.
 -   **Lifecycle Hooks**: Tap into the component lifecycle with `onMount`, `onUnmount`, and `onUpdate`.
 -   **Declarative AJAX**: Load dynamic content with HTML attributes, similar to HTMX.
 -   **SPA Routing**: Nested routes, layouts, guards, and programmatic navigation.
@@ -155,6 +156,134 @@ Components are `.html` files composed of three optional sections:
 -   `<template>`: The HTML structure of your component.
 -   `<script>`: The component's logic, written in JavaScript. It must have a `default export` that is a function. This function's return value (an object) exposes data and methods to the template.
 -   `<style>`: The component's CSS. These styles are **automatically scoped** to the component.
+
+### Component Composition & Nesting
+
+BaseDOM supports building complex applications by composing components. You can use your own components as custom tags inside other components, passing data down through props and projecting content using slots.
+
+**1. Using a Child Component**
+
+To use a component, it must first be registered with a unique name. Once registered, you can use it in any other component's template like a standard HTML tag. BaseDOM recognizes `PascalCase` and `kebab-case` tag names.
+
+*(Note: Component registration is handled via the `registry.js` module. You would typically register your components in your application's entry point.)*
+
+```html
+<!-- Assuming 'UserProfileCard' has been registered -->
+<template>
+  <div>
+    <h1>Dashboard</h1>
+    <UserProfileCard :user="currentUser" @logout="handleLogout"></UserProfileCard>
+    <user-profile-card :user="anotherUser"></user-profile-card> <!-- kebab-case also works -->
+  </div>
+</template>
+
+<script>
+  // ... component logic
+</script>
+```
+
+**2. Passing Data with Props**
+
+You can pass data to child components using attributes.
+
+-   **Static Props:** Pass static strings directly.
+    ```html
+    <MyComponent title="Static Title"></MyComponent>
+    ```
+
+-   **Dynamic Props:** Use the `x-bind` directive or its `:` shorthand to pass dynamic data from the parent's context. The value should be a JavaScript expression.
+
+    ```html
+    <template>
+      <MyComponent :user-data="user" :is-active="status === 'active'"></MyComponent>
+    </template>
+    <script>
+    export default function() {
+      return {
+        user: { name: 'John Doe' },
+        status: 'active'
+      };
+    }
+    </script>
+    ```
+
+-   **Passing Event Handlers:** Use the `x-on` directive or its `@` shorthand to pass down functions as event handlers.
+
+    ```html
+    <template>
+      <MyButton @click="sayHello"></MyButton>
+    </template>
+    <script>
+    export default function() {
+      return {
+        sayHello: () => alert('Hello!')
+      };
+    }
+    </script>
+    ```
+
+**3. Receiving Props in a Child Component**
+
+The child component receives all passed attributes as properties of the first argument to its main function.
+
+*`MyComponent.html`*
+```html
+<template>
+  <div>
+    <h2>{{ title }}</h2>
+    <p>User: {{ userData.name }}</p>
+  </div>
+</template>
+
+<script>
+export default function(props) {
+  // props contains all passed attributes, including reactive bindings and event handlers.
+  // e.g., { title: "Static Title", userData: { name: 'John Doe' }, isActive: true, onClick: function... }
+
+  // Expose them to the template
+  return {
+    title: props.title,
+    userData: props.userData
+  };
+}
+</script>
+```
+
+**4. Content Projection with Slots**
+
+To project content from a parent into a specific place in a child component, you can use the `<slot>` element. Any content placed between the opening and closing tags of your custom component in the parent will be rendered where the `<slot>` tag appears in the child.
+
+*Parent Component:*
+```html
+<template>
+  <Card>
+    <!-- This content is passed to the child -->
+    <h4>Important Message</h4>
+    <p>This is the content that will be placed inside the Card's slot.</p>
+  </Card>
+</template>
+```
+
+*Child Component (`Card.html`):*
+```html
+<template>
+  <div class="card">
+    <div class="card-header">
+      <strong>Card</strong>
+    </div>
+    <div class="card-body">
+      <slot></slot> <!-- The parent's content will be rendered here -->
+    </div>
+  </div>
+</template>
+
+<style>
+  .card { border: 1px solid #eee; padding: 1em; margin: 1em 0; }
+  .card-body { margin-top: 1em; }
+</style>
+```
+
+---
 
 ### Reactivity (`state.js`)
 
@@ -610,7 +739,7 @@ We welcome contributions! Please feel free to open an issue or submit a pull req
 
 ### TODO & Roadmap
 
--   [ ] **Declarative Component Imports & Nesting:** The ability to import an SFC into another and use it as a custom tag (e.g., `<MyComponent>`). Some kind of component registry maybe?
+-   [x] **Declarative Component Imports & Nesting:** The ability to import an SFC into another and use it as a custom tag (e.g., `<MyComponent>`).
 -   [ ] **Transitions:** Add `x-transition` directives for simple CSS transitions.
 -   [ ] **CLI Tool:** A command-line tool for scaffolding new projects and components.
 -   [ ] **Cookbook:** Create a "cookbook" section with recipes for common patterns.
