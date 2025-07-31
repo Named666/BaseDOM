@@ -94,12 +94,12 @@ export async function parseComponent(htmlText) {
                 }
             }
             // Also match top-level function and class declarations
-            const fnClassRegex = /^(?:function|class)\s+([\w$]+)/gm;
+            const fnClassRegex = /^(?:async\s+function|function|class)\s+([\w$]+)/gm;
             while ((m = fnClassRegex.exec(setupMatch[1])) !== null) {
                 identifiers.push(m[1]);
             }
             // Compose the new script: wrap setup code inside export default function
-            finalScript = `\nexport default function(props, ctx) {\n${setupCode}\n  return { ${identifiers.join(', ')} };\n}`;
+            finalScript = `export default function(props, ctx) {${setupCode}\n  return {\n\t${identifiers.join(',\n\t')} };\n}`;
         }
         if (window.devWarn) devWarn('[parser.js/parseComponent] Final script for component', { finalScript });
         const componentModule = await import(`data:text/javascript,${encodeURIComponent(finalScript)}`);
@@ -153,11 +153,21 @@ function extractParts(htmlText) {
     htmlText = htmlText.replace(/\r\n?/g, '\n');
     const templateMatch = htmlText.match(/<template>([\s\S]*?)<\/template>/i);
     const scriptMatch = htmlText.match(/<script>([\s\S]*?)<\/script>/i);
+    const scriptSetupMatch = htmlText.match(/<script\s+setup[^>]*>([\s\S]*?)<\/script>/i);
     const styleMatch = htmlText.match(/<style>([\s\S]*?)<\/style>/i);
     let template = '', script = '', styles = '';
     if (templateMatch) {
         template = templateMatch[1].trim();
-        if (scriptMatch) script = scriptMatch[1].trim();
+        if (scriptSetupMatch) {
+            script = scriptSetupMatch[1].trim();
+        } else if (scriptMatch) {
+            script = scriptMatch[1].trim();
+        }
+        if (styleMatch) styles = styleMatch[1].trim();
+    } else if (scriptSetupMatch) {
+        const scriptStart = scriptSetupMatch.index;
+        template = htmlText.slice(0, scriptStart).trim();
+        script = scriptSetupMatch[1].trim();
         if (styleMatch) styles = styleMatch[1].trim();
     } else if (scriptMatch) {
         const scriptStart = scriptMatch.index;
