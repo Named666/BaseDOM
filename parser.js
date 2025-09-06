@@ -12,39 +12,36 @@ import { getComponent } from './registry.js';
  * @returns {Function|string} A computed signal if interpolation is found, otherwise the static text.
  */
 function parseTextNode(text, context) {
-    // if (window.devWarn) devWarn(`[parser.js/parseTextNode] Parsing text node: '${text}'`, { text, context });
-    if (!text.includes('{{')) return text;
-    const regex = /\{\{(.*?)\}\}/g;
-    const match = text.trim().match(/^\{\{(.*)\}\}$/);
-    if (match) {
-        const expr = match[1].trim();
-        // if (window.devWarn) devWarn(`[parser.js/parseTextNode] Found full interpolation: '{{${expr}}}'`, { expr, context });
-        try {
-            return () => _reactive(evaluateExpression(expr, context));
-        } catch (error) {
-            if (window.devWarn) devWarn(`[parser.js/parseTextNode] Error evaluating expression '${expr}':`, error);
-            return `{{${expr}}}`; // Return the original expression on error
-        }
+  if (!text.includes('{{')) return text;
+  const regex = /\{\{(.*?)\}\}/g;
+  const match = text.trim().match(/^\{\{(.*)\}\}$/);
+  if (match) {
+    const expr = match[1].trim();
+    try {
+      return () => _reactive(evaluateExpression(expr, context));
+    } catch (error) {
+      console.error(`Interpolation error: ${expr}`, error);
+      return `{{${expr}}}`;
     }
-    const parts = [];
-    let lastIndex = 0, m;
-    while ((m = regex.exec(text)) !== null) {
-        if (m.index > lastIndex) parts.push(text.slice(lastIndex, m.index));
-        const expr = m[1].trim();
-        // if (window.devWarn) devWarn(`[parser.js/parseTextNode] Found interpolation: '{{${expr}}}'`, { expr, context });
-        parts.push(() => {
-            try {
-                const v = _reactive(evaluateExpression(expr, context));
-                return (v instanceof HTMLElement || v instanceof DocumentFragment) ? '' : (v !== undefined ? v : `{{${expr}}}`);
-            } catch (error) {
-                if (window.devWarn) devWarn(`[parser.js/parseTextNode] Error evaluating expression '${expr}':`, error);
-                return `{{${expr}}}`; // Return the original expression on error
-            }
-        });
-        lastIndex = regex.lastIndex;
-    }
-    if (lastIndex < text.length) parts.push(text.slice(lastIndex));
-    return computed(() => parts.map(part => typeof part === 'function' ? part() : part).join(''));
+  }
+  const parts = [];
+  let lastIndex = 0, m;
+  while ((m = regex.exec(text)) !== null) {
+    if (m.index > lastIndex) parts.push(text.slice(lastIndex, m.index));
+    const expr = m[1].trim();
+    parts.push(() => {
+      try {
+        const v = _reactive(evaluateExpression(expr, context));
+        return (v instanceof HTMLElement || v instanceof DocumentFragment) ? '' : (v !== undefined ? v : `{{${expr}}}`);
+      } catch (error) {
+        console.error(`Interpolation error: ${expr}`, error);
+        return `{{${expr}}}`;
+      }
+    });
+    lastIndex = regex.lastIndex;
+  }
+  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+  return computed(() => parts.map(part => typeof part === 'function' ? part() : part).join(''));
 }
 
 /**
@@ -54,104 +51,50 @@ function parseTextNode(text, context) {
  */
 
 export async function parseComponent(htmlText) {
-    if (window.devWarn) devWarn('[parser.js/parseComponent] Parsing component', { htmlText });
-    try {
-        const { template, script, styles } = extractParts(htmlText);
-        if (window.devWarn) devWarn('[parser.js/parseComponent] Extracted parts', { template, script, styles });
-        let finalScript = script;
-        // Detect <script setup> mode
-        const setupMatch = htmlText.match(/<script\s+setup[^>]*>([\s\S]*?)<\/script>/i);
-        if (setupMatch) {
-            // if (window.devWarn) devWarn('[parser.js/parseComponent] <script setup> detected', { setup: setupMatch[1] });
-            // Compose a default export function that exposes all top-level variables/signals
-            let setupCode = setupMatch[1];
-            // Indent all lines by 2 spaces for function body, but preserve empty lines
-            setupCode = setupCode.split('\n').map(line => line.trim() === '' ? '' : '  ' + line).join('\n');
-            // Enhanced: Extract all identifiers from top-level declarations, including destructuring
-            const identifiers = [];
-            // Match top-level const/let/var declarations (no leading whitespace)
-            const declRegex = /^(?:const|let|var)\s+([^=;]+)/gm;
-            let m;
-            while ((m = declRegex.exec(setupMatch[1])) !== null) {
-                const lhs = m[1].trim();
-                // Remove trailing comma if present
-                const cleanLhs = lhs.replace(/,$/, '');
-                // If destructured array: [a, b, ...]
-                if (cleanLhs.startsWith('[')) {
-                    // Remove brackets and split by comma
-                    const arr = cleanLhs.slice(1, -1).split(',').map(s => s.trim()).filter(Boolean);
-                    for (const v of arr) {
-                        // Remove default assignment (a = 1)
-                        const name = v.split('=')[0].trim();
-                        if (name) identifiers.push(name);
-                    }
-                } else if (cleanLhs.startsWith('{')) {
-                    // Remove braces and split by comma
-                    const arr = cleanLhs.slice(1, -1).split(',').map(s => s.trim()).filter(Boolean);
-                    for (const v of arr) {
-                        // Handle renaming: x: y, or default assignment: y = 1
-                        let name = v;
-                        if (v.includes(':')) name = v.split(':')[1].trim();
-                        if (name.includes('=')) name = name.split('=')[0].trim();
-                        if (name) identifiers.push(name);
-                    }
-                } else {
-                    // Simple identifier(s), could be multiple (e.g., let a, b)
-                    const vars = cleanLhs.split(',').map(s => s.trim());
-                    for (const v of vars) {
-                        if (v) identifiers.push(v);
-                    }
-                }
-            }
-            // Also match top-level function and class declarations
-            const fnClassRegex = /^(?:async\s+function|function|class)\s+([\w$]+)/gm;
-            while ((m = fnClassRegex.exec(setupMatch[1])) !== null) {
-                identifiers.push(m[1]);
-            }
-            // Compose the new script: wrap setup code inside export default function
-            finalScript = `export default function(props, ctx) {${setupCode}\n  return {\n\t${identifiers.join(',\n\t')} };\n}`;
-        }
-        if (window.devWarn) devWarn('[parser.js/parseComponent] Final script for component', { finalScript });
-        const componentModule = await import(`data:text/javascript,${encodeURIComponent(finalScript)}`);
-        const componentLogicFn = componentModule.default;
-        if (typeof componentLogicFn !== 'function') {
-            if (window.devWarn) devWarn('[parser.js/parseComponent] Component script did not export a function', { componentModule });
-            throw new Error('Component script must export a default function');
-        }
-        const domParser = new DOMParser();
-        const doc = domParser.parseFromString(template, 'text/html');
-        let nodes = Array.from(doc.body.childNodes).filter(n => n.nodeType === Node.ELEMENT_NODE || n.nodeType === Node.TEXT_NODE);
-        nodes = preprocessNodes(nodes);
-        let cachedContext = null;
-        return (props) => {
-            const currentProps = props || {};
-            if (!cachedContext || currentProps !== cachedContext.__lastProps) {
-                // if (window.devWarn) devWarn('[parser.js/parseComponent] Creating new context for component', { currentProps });
-                cachedContext = componentLogicFn(currentProps);
-                cachedContext.__lastProps = currentProps;
-            }
-            const { onMount, onUnmount, onUpdate, ...otherContext } = cachedContext;
-            const lifecycleHooks = { onMount, onUnmount, onUpdate };
-            if (nodes.length === 1) {
-                // if (window.devWarn) devWarn('[parser.js/parseComponent] Rendering single root node', { node: nodes[0], otherContext });
-                const element = parseNode(nodes[0], otherContext, styles);
-                return attachLifecycleHooksToElement(element, lifecycleHooks);
-            } else if (nodes.length > 1) {
-                // if (window.devWarn) devWarn('[parser.js/parseComponent] Rendering multiple root nodes', { nodes, otherContext });
-                const children = nodes.map(n => parseNode(n, otherContext)).filter(Boolean);
-                return Element('div')({ children, ...(styles && { styles }), ...lifecycleHooks });
-            } else {
-                if (window.devWarn) devWarn('[parser.js/parseComponent] No content found in template', { template });
-                return Element('div')({ children: 'No content', ...(styles && { styles }), ...lifecycleHooks });
-            }
-        };
-    } catch (error) {
-        if (window.devWarn) devWarn('[parser.js/parseComponent] Error parsing component', { error, htmlText });
-        return () => Element('div')({
-            style: { color: 'red', border: '1px solid red', padding: '10px' },
-            children: [Element('h3')('Component Parse Error'), Element('pre')(error.message)]
-        });
+  try {
+    const { template, script, styles } = extractParts(htmlText);
+    let finalScript = script;
+    const setupMatch = htmlText.match(/<script\s+setup[^>]*>([\s\S]*?)<\/script>/i);
+    if (setupMatch) {
+      let setupCode = setupMatch[1];
+      setupCode = setupCode.split('\n').map(line => line.trim() === '' ? '' : '  ' + line).join('\n');
+      const identifiers = extractIdentifiers(setupMatch[1]);
+      finalScript = `export default function(props, ctx) {${setupCode}\n  return {\n\t${identifiers.join(',\n\t')} };\n}`;
     }
+    const componentModule = await import(`data:text/javascript,${encodeURIComponent(finalScript)}`);
+    const componentLogicFn = componentModule.default;
+    if (typeof componentLogicFn !== 'function') {
+      throw new Error('Component script must export a default function');
+    }
+    const domParser = new DOMParser();
+    const doc = domParser.parseFromString(template, 'text/html');
+    let nodes = Array.from(doc.body.childNodes).filter(n => n.nodeType === Node.ELEMENT_NODE || n.nodeType === Node.TEXT_NODE);
+    nodes = preprocessNodes(nodes);
+    let cachedContext = null;
+    return (props) => {
+      const currentProps = props || {};
+      if (!cachedContext || currentProps !== cachedContext.__lastProps) {
+        cachedContext = componentLogicFn(currentProps);
+        cachedContext.__lastProps = currentProps;
+      }
+      const { onMount, onUnmount, onUpdate, ...otherContext } = cachedContext;
+      const lifecycleHooks = { onMount, onUnmount, onUpdate };
+      if (nodes.length === 1) {
+        const element = parseNode(nodes[0], otherContext, styles);
+        return attachLifecycleHooksToElement(element, lifecycleHooks);
+      } else if (nodes.length > 1) {
+        const children = nodes.map(n => parseNode(n, otherContext)).filter(Boolean);
+        return Element('div')({ children, ...(styles && { styles }), ...lifecycleHooks });
+      } else {
+        return Element('div')({ children: 'No content', ...(styles && { styles }), ...lifecycleHooks });
+      }
+    };
+  } catch (error) {
+    return () => Element('div')({
+      style: { color: 'red', border: '1px solid red', padding: '10px' },
+      children: [Element('h3')('Component Parse Error'), Element('pre')(error.message)]
+    });
+  }
 }
 
 /**
@@ -327,4 +270,43 @@ export function parseNode(node, context, componentStyles = null) {
     const children = Array.from(node.childNodes).map(child => parseNode(child, context)).filter(Boolean);
     // if (window.devWarn) devWarn('[parser.js/parseNode] Rendering normal element', { tagName, props, children });
     return Element(node.tagName.toLowerCase())({ ...props, children });
+}
+
+/**
+ * Extracts identifiers from script setup code for component parsing.
+ * @param {string} code - The script setup code.
+ * @returns {Array<string>} Array of identifier names.
+ */
+function extractIdentifiers(code) {
+  const identifiers = [];
+  const declRegex = /^(?:const|let|var)\s+([^=;]+)/gm;
+  let m;
+  while ((m = declRegex.exec(code)) !== null) {
+    const lhs = m[1].trim().replace(/,$/, '');
+    if (lhs.startsWith('[')) {
+      const arr = lhs.slice(1, -1).split(',').map(s => s.trim()).filter(Boolean);
+      arr.forEach(v => {
+        const name = v.split('=')[0].trim();
+        if (name) identifiers.push(name);
+      });
+    } else if (lhs.startsWith('{')) {
+      const arr = lhs.slice(1, -1).split(',').map(s => s.trim()).filter(Boolean);
+      arr.forEach(v => {
+        let name = v;
+        if (v.includes(':')) name = v.split(':')[1].trim();
+        if (name.includes('=')) name = name.split('=')[0].trim();
+        if (name) identifiers.push(name);
+      });
+    } else {
+      const vars = lhs.split(',').map(s => s.trim());
+      vars.forEach(v => {
+        if (v) identifiers.push(v);
+      });
+    }
+  }
+  const fnClassRegex = /^(?:async\s+function|function|class)\s+([\w$]+)/gm;
+  while ((m = fnClassRegex.exec(code)) !== null) {
+    identifiers.push(m[1]);
+  }
+  return identifiers;
 }

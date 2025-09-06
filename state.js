@@ -20,12 +20,10 @@ export function signal(nameOrValue, initialValueIfPersistent) {
         try {
             const storedValue = sessionStorage.getItem(key);
             if (storedValue !== null) {
-                // Use the stored value if it exists.
                 value = JSON.parse(storedValue);
             }
         } catch (e) {
-            console.error(`Error parsing stored signal "${key}":`, e);
-            // If parsing fails, we'll stick with the initialValueIfPersistent.
+            console.warn(`Error loading persistent signal "${key}":`, e);
         }
     }
 
