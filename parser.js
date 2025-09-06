@@ -19,7 +19,12 @@ function parseTextNode(text, context) {
     if (match) {
         const expr = match[1].trim();
         // if (window.devWarn) devWarn(`[parser.js/parseTextNode] Found full interpolation: '{{${expr}}}'`, { expr, context });
-        return () => _reactive(evaluateExpression(expr, context));
+        try {
+            return () => _reactive(evaluateExpression(expr, context));
+        } catch (error) {
+            if (window.devWarn) devWarn(`[parser.js/parseTextNode] Error evaluating expression '${expr}':`, error);
+            return `{{${expr}}}`; // Return the original expression on error
+        }
     }
     const parts = [];
     let lastIndex = 0, m;
@@ -28,8 +33,13 @@ function parseTextNode(text, context) {
         const expr = m[1].trim();
         // if (window.devWarn) devWarn(`[parser.js/parseTextNode] Found interpolation: '{{${expr}}}'`, { expr, context });
         parts.push(() => {
-            const v = _reactive(evaluateExpression(expr, context));
-            return (v instanceof HTMLElement || v instanceof DocumentFragment) ? '' : (v !== undefined ? v : `{{${expr}}}`);
+            try {
+                const v = _reactive(evaluateExpression(expr, context));
+                return (v instanceof HTMLElement || v instanceof DocumentFragment) ? '' : (v !== undefined ? v : `{{${expr}}}`);
+            } catch (error) {
+                if (window.devWarn) devWarn(`[parser.js/parseTextNode] Error evaluating expression '${expr}':`, error);
+                return `{{${expr}}}`; // Return the original expression on error
+            }
         });
         lastIndex = regex.lastIndex;
     }

@@ -71,14 +71,19 @@ export const xIfDirective = {
         if (elseNodeClone) elseNodeClone.removeAttribute('x-else');
 
         return computed(() => {
-            const shouldShow = evaluateExpression(ifDirective, context);
-            
-            if (shouldShow) {
-                return parseNode(ifNodeClone, context);
-            } else if (elseNodeClone) {
-                return parseNode(elseNodeClone, context);
+            try {
+                const shouldShow = evaluateExpression(ifDirective, context);
+                
+                if (shouldShow) {
+                    return parseNode(ifNodeClone, context);
+                } else if (elseNodeClone) {
+                    return parseNode(elseNodeClone, context);
+                }
+                return null;
+            } catch (error) {
+                if (window.devWarn) devWarn(`[directives.js/xIfDirective] Error evaluating x-if expression '${ifDirective}':`, error);
+                return null;
             }
-            return null;
         });
     }
 };
@@ -124,19 +129,20 @@ export const xForDirective = {
         
         // Return a function that reactively returns the list of components
         return computed(() => {
-            const items = evaluateExpression(listExpr.trim(), context);
-            let itemsArray = _reactive(items);
-            
-            if (!Array.isArray(itemsArray)) {
-                return [];
-            }
+            try {
+                const items = evaluateExpression(listExpr.trim(), context);
+                let itemsArray = _reactive(items);
+                
+                if (!Array.isArray(itemsArray)) {
+                    return [];
+                }
 
-            return itemsArray.map((item, index) => {
-                // For each item, create a new context that includes the loop variables
-                const loopContext = {
-                    ...context,
-                    [itemName]: () => item, // Make the item available as a "signal"
-                };
+                return itemsArray.map((item, index) => {
+                    // For each item, create a new context that includes the loop variables
+                    const loopContext = {
+                        ...context,
+                        [itemName]: () => item, // Make the item available as a "signal"
+                    };
                 
                 // Add index if specified
                 if (indexName) {
@@ -148,6 +154,10 @@ export const xForDirective = {
                 
                 return parseNode(nodeClone.cloneNode(true), loopContext);
             });
+            } catch (error) {
+                if (window.devWarn) devWarn(`[directives.js/xForDirective] Error evaluating x-for expression '${listExpr}':`, error);
+                return [];
+            }
         });
     }
 };
@@ -227,8 +237,13 @@ export const xShowDirective = {
         const showExpr = node.getAttribute('x-show');
         if (!props.style) props.style = {};
         props.style.display = computed(() => {
-            const shouldShow = evaluateExpression(showExpr, context);
-            return shouldShow ? '' : 'none';
+            try {
+                const shouldShow = evaluateExpression(showExpr, context);
+                return shouldShow ? '' : 'none';
+            } catch (error) {
+                if (window.devWarn) devWarn(`[directives.js/xShowDirective] Error evaluating x-show expression '${showExpr}':`, error);
+                return 'none'; // Default to hidden on error
+            }
         });
     }
 };
@@ -573,6 +588,24 @@ export const xSlotDirective = {
 };
 
 
+export const xRefDirective = {
+    controlFlow: false,
+    handle: (parsingContext, props) => {
+        const { node, context } = parsingContext;
+        
+        // Check if this node has x-ref attribute
+        if (!node.hasAttribute || !node.hasAttribute('x-ref')) return;
+        
+        const refExpr = node.getAttribute('x-ref');
+        const refName = evaluateExpression(refExpr, context);
+        
+        // Attach ref to context
+        if (typeof refName === 'string' && context[refName]) {
+            context[refName] = node; // Assign the DOM element
+        }
+    }
+};
+
 // Register built-in directives
 registerDirective('slot', slotDirective);
 registerDirective('x-slot', xSlotDirective);
@@ -584,6 +617,7 @@ registerDirective('@', xOnDirective);
 registerDirective('x-bind', xBindDirective);
 registerDirective('x-show', xShowDirective);
 registerDirective('x-model', xModelDirective);
+registerDirective('x-ref', xRefDirective);
 registerDirective('x-get', FetchDirective);
 registerDirective('x-post', FetchDirective);
 registerDirective('x-mount', xMountDirective);

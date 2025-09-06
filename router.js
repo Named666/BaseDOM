@@ -33,7 +33,7 @@ function defineRoute(config, componentFn, guards = {}, isChild = false, inherite
   const regex = new RegExp(
     '^' + finalPath
       .replace(/\/+$/, '')
-      .replace(/\/:\w+\?/g, (_, name) => { paramNames.push(name); return '(?:/([^/]+))?'; })
+      .replace(/\/:([\w]+)\?/g, (_, name) => { paramNames.push(name); return '(?:/([^/]+))?'; })
       .replace(/:(\w+)/g, (_, name) => { paramNames.push(name); return '([^/]+)'; })
       .replace(/\*([\w]+)$/g, (_, name) => { paramNames.push(name); return '(.*)'; })
     + (isChild ? '' : '/?') + (children?.length ? '' : '$')

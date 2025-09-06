@@ -1,14 +1,12 @@
 // navigation.js
 
-import { renderRoute } from './render.js';
+import { renderRoute, escapeHtml, rootElementSelector, setCurrentView } from './render.js';
 import { findMatchingRoute, parseQuery } from './router.js';
 import { renderComponent, createComponent } from './components.js';
 import { signal } from './state.js';
-import { escapeHtml, rootElementSelector } from './render.js';
 
 // --- Centralized Signals ---
 export const [currentRoute, setCurrentRoute] = signal(null);
-export const [currentView, setCurrentView] = signal(null);
 export const [pendingNavigation, setPendingNavigation] = signal(null);
 export const [errorState, setErrorState] = signal(null);
 export const [scrollPositions, setScrollPositions] = signal({});
@@ -46,13 +44,19 @@ async function runGuards(guards, context) {
   return true;
 }
 
+function buildGuards(routeMatch, type) {
+  // type is 'beforeEnter' or 'beforeLeave'
+  const global = globalGuards[type] || [];
+  const routeGuards = routeMatch?.matched?.at(-1)?.route?.guards?.[type] || [];
+  return [...global, ...routeGuards];
+}
+
 // --- Navigation ---
 export async function navigate(path, { replace = false, triggeredByPopstate = false } = {}) {
   if (pendingNavigation()) throw new Error('Navigation already in progress');
   const currentPath = location.pathname + location.search;
   if (path === currentPath && !replace) return;
   saveScroll(currentPath, window.scrollX, window.scrollY);
-  setPendingNavigation(path);
   try {
     const currentRouteMatch = findMatchingRoute(currentPath.split('?')[0]);
     const [targetPath] = path.split('?');
@@ -65,30 +69,22 @@ export async function navigate(path, { replace = false, triggeredByPopstate = fa
     };
     // beforeLeave guards
     if (currentRouteMatch) {
-      const leaveGuards = [
-        ...globalGuards.beforeLeave,
-        ...(currentRouteMatch.matched.at(-1)?.route?.guards?.beforeLeave || [])
-      ];
+      const leaveGuards = buildGuards(currentRouteMatch, 'beforeLeave');
       const leaveResult = await runGuards(leaveGuards, context);
-      if (leaveResult === false) return;
-      if (typeof leaveResult === 'string') {
-        setPendingNavigation(null);
-        return navigate(leaveResult, { replace: true });
-      }
+      if (leaveResult === false) { setPendingNavigation(null); return; }
+      if (typeof leaveResult === 'string') { setPendingNavigation(null); return navigate(leaveResult, { replace: true }); }
     }
     // beforeEnter guards
     if (targetRouteMatch) {
-      const enterGuards = [
-        ...globalGuards.beforeEnter,
-        ...(targetRouteMatch.matched.at(-1)?.route?.guards?.beforeEnter || [])
-      ];
+      const enterGuards = buildGuards(targetRouteMatch, 'beforeEnter');
       const enterResult = await runGuards(enterGuards, context);
-      if (enterResult === false) return;
-      if (typeof enterResult === 'string') {
-        setPendingNavigation(null);
-        return navigate(enterResult, { replace: true });
-      }
+      if (enterResult === false) { setPendingNavigation(null); return; }
+      if (typeof enterResult === 'string') { setPendingNavigation(null); return navigate(enterResult, { replace: true }); }
     }
+
+    // All guards passed - mark navigation as pending and proceed to render
+    setPendingNavigation(path);
+
     // Render route and update signals
     await renderRoute(path);
     if (!triggeredByPopstate) {

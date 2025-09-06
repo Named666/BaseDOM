@@ -22,24 +22,36 @@ export function onAfterRender(hook) { hooks.after.push(hook); }
 let rootElement = null;
 export let rootElementSelector = '#app';
 const [currentView, setCurrentView] = signal(null);
+export { setCurrentView };
 let prevRoutes = [];
 const componentCache = new Map();
 
 
 async function resolveComponent(component) {
-  if (typeof component !== 'string') return component;
-  if (!component.endsWith('.html')) return component;
+  // Normalize to always return a function that accepts props
+  if (typeof component === 'function') {
+    return (props) => component(props);
+  }
+
+  if (typeof component !== 'string') {
+    // If it's a DOM node or other value, wrap it into a function
+    return () => component;
+  }
+
+  // If it's a string, treat .html paths specially; otherwise return a function that returns the string
+  if (!component.endsWith('.html')) return () => component;
+
   if (componentCache.has(component)) {
     devWarn(`Component cache hit for: ${component}`);
     return componentCache.get(component);
   }
+
   try {
-    // devWarn(`Fetching component: ${component}`);
     const response = await fetch(component);
     if (!response.ok) throw new Error(`Failed to fetch component: ${component} (status: ${response.status})`);
     const sfcText = await response.text();
-    // devWarn(`Parsing component: ${component}`);
     const fn = await parseComponent(sfcText);
+    // parsed component is expected to be a function(props) => element
     componentCache.set(component, fn);
     devWarn(`Component loaded and cached: ${component}`);
     return fn;
@@ -52,6 +64,17 @@ async function resolveComponent(component) {
       ]
     });
   }
+}
+
+function isPartialOutletUpdate(prevRoutes, newRoutes) {
+  if (!prevRoutes || !newRoutes) return false;
+  if (prevRoutes.length === 0) return false;
+  if (prevRoutes.length !== newRoutes.length) return false;
+  // all but last must match
+  for (let i = 0; i < prevRoutes.length - 1; i++) {
+    if (prevRoutes[i] !== newRoutes[i]) return false;
+  }
+  return true;
 }
 
 
@@ -109,12 +132,8 @@ export async function renderRoute(pathname) {
         // devWarn(`Document title set: ${document.title}`);
       }
 
-      // Partial outlet update for leaf route
-      if (
-        prevRoutes.length &&
-        prevRoutes.length === newRoutes.length &&
-        prevRoutes.slice(0, -1).every((r, i) => r === newRoutes[i])
-      ) {
+  // Partial outlet update for leaf route
+  if (isPartialOutletUpdate(prevRoutes, newRoutes)) {
         const leaf = matched[matched.length - 1];
         // devWarn(`Partial outlet update for leaf route: ${leaf.route.path}`);
         const componentFn = await resolveComponent(leaf.route.componentFn);
