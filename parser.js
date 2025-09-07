@@ -14,16 +14,6 @@ import { getComponent } from './registry.js';
 function parseTextNode(text, context) {
   if (!text.includes('{{')) return text;
   const regex = /\{\{(.*?)\}\}/g;
-  const match = text.trim().match(/^\{\{(.*)\}\}$/);
-  if (match) {
-    const expr = match[1].trim();
-    try {
-      return () => _reactive(evaluateExpression(expr, context));
-    } catch (error) {
-      console.error(`Interpolation error: ${expr}`, error);
-      return `{{${expr}}}`;
-    }
-  }
   const parts = [];
   let lastIndex = 0, m;
   while ((m = regex.exec(text)) !== null) {
@@ -108,33 +98,34 @@ function extractParts(htmlText) {
     const scriptMatch = htmlText.match(/<script>([\s\S]*?)<\/script>/i);
     const scriptSetupMatch = htmlText.match(/<script\s+setup[^>]*>([\s\S]*?)<\/script>/i);
     const styleMatch = htmlText.match(/<style>([\s\S]*?)<\/style>/i);
+    
     let template = '', script = '', styles = '';
+    
+    // Determine script content (prioritize scriptSetupMatch)
+    const activeScriptMatch = scriptSetupMatch || scriptMatch;
+    if (activeScriptMatch) {
+        script = activeScriptMatch[1].trim();
+    } else {
+        script = 'export default function(props) { return {}; }';
+    }
+    
+    // Determine template content
     if (templateMatch) {
         template = templateMatch[1].trim();
-        if (scriptSetupMatch) {
-            script = scriptSetupMatch[1].trim();
-        } else if (scriptMatch) {
-            script = scriptMatch[1].trim();
-        }
-        if (styleMatch) styles = styleMatch[1].trim();
-    } else if (scriptSetupMatch) {
-        const scriptStart = scriptSetupMatch.index;
-        template = htmlText.slice(0, scriptStart).trim();
-        script = scriptSetupMatch[1].trim();
-        if (styleMatch) styles = styleMatch[1].trim();
-    } else if (scriptMatch) {
-        const scriptStart = scriptMatch.index;
-        template = htmlText.slice(0, scriptStart).trim();
-        script = scriptMatch[1].trim();
-        if (styleMatch) styles = styleMatch[1].trim();
+    } else if (activeScriptMatch) {
+        template = htmlText.slice(0, activeScriptMatch.index).trim();
     } else {
         template = htmlText.trim();
-        script = 'export default function(props) { return {}; }';
         if (styleMatch) {
-            styles = styleMatch[1].trim();
             template = template.replace(/<style>[\s\S]*?<\/style>/i, '').trim();
         }
     }
+    
+    // Handle styles
+    if (styleMatch) {
+        styles = styleMatch[1].trim();
+    }
+    
     if (!template) template = '<div>Template not found</div>';
     return { template, script, styles };
 }
@@ -200,6 +191,48 @@ function processDirectives(node, context, parsingContext) {
 }
 
 /**
+ * Finds a custom component function by tag name.
+ * @param {string} tagName - The tag name to search for.
+ * @returns {Function|null} The component function or null.
+ */
+function findCustomComponent(tagName) {
+  let registryNames = [tagName, tagName.toLowerCase()];
+  if (tagName.includes('-')) {
+    const pascal = tagName.replace(/(^|\-)([a-z])/g, (_, __, c) => c.toUpperCase());
+    registryNames.push(pascal);
+    registryNames.push(pascal.toLowerCase());
+  }
+  for (const name of registryNames) {
+    const componentFn = getComponent(name) || getComponent(name.toLowerCase());
+    if (componentFn) return componentFn;
+  }
+  return null;
+}
+
+/**
+ * Parses attributes from a node, handling reactive bindings.
+ * @param {Node} node - The DOM node.
+ * @param {object} context - The component context.
+ * @returns {object} The parsed attributes.
+ */
+function parseNodeAttributes(node, context) {
+  const attrs = {};
+  for (const attr of Array.from(node.attributes)) {
+    let val = attr.value;
+    if (attr.name.startsWith(':')) {
+      const propName = attr.name.slice(1);
+      if (/^\{\{.*\}\}$/.test(val.trim())) {
+        val = (() => _reactive(evaluateExpression(val.trim().slice(2, -2), context)));
+      }
+      attrs[propName] = val;
+    } else {
+      attrs[attr.name] = val;
+    }
+  }
+  return attrs;
+}
+
+/**
  * Recursively parses a DOM node into a BaseDOM component.
  * @param {Node} node - The DOM node to parse.
  * @param {object} context - The component context.
@@ -207,36 +240,14 @@ function processDirectives(node, context, parsingContext) {
  * @returns {HTMLElement|Function|null} The parsed component or null.
  */
 export function parseNode(node, context, componentStyles = null) {
-    // if (window.devWarn) devWarn('[parser.js/parseNode] Parsing node', { node, context, componentStyles });
     if (node.nodeType === Node.TEXT_NODE) return parseTextNode(node.textContent, context);
     if (node.nodeType !== Node.ELEMENT_NODE) return null;
 
-    // Check for custom component tag (PascalCase or kebab-case, registered)
-    let tagName = node.tagName;
-    let registryNames = [tagName, tagName.toLowerCase()];
-    if (tagName.includes('-')) {
-        const pascal = tagName.replace(/(^|\-)([a-z])/g, (_, __, c) => c.toUpperCase());
-        registryNames.push(pascal);
-        registryNames.push(pascal.toLowerCase());
-    }
-    let componentFn = null;
-    for (const name of registryNames) {
-        componentFn = getComponent(name) || getComponent(name.toLowerCase());
-        if (componentFn) break;
-    }
+    // Check for custom component tag
+    const componentFn = findCustomComponent(node.tagName);
     if (componentFn) {
-        if (window.devWarn) devWarn('[parser.js/parseNode] Found custom component', { tagName, registryNames, context });
-        const attrs = {};
-        for (const attr of Array.from(node.attributes)) {
-            let val = attr.value;
-            if (attr.name.startsWith(':')) {
-                const propName = attr.name.slice(1);
-                if (/^\{\{.*\}\}$/.test(val.trim())) {
-                    val = (() => _reactive(evaluateExpression(val.trim().slice(2, -2), context)));
-                }
-                attrs[propName] = val;
-            }
-        }
+        window.devWarn('[parser.js/parseNode] Found custom component', { tagName: node.tagName, context });
+        const attrs = parseNodeAttributes(node, context);
         const parsingContext = {
             parseNode: (n, ctx) => parseNode(n, ctx || context),
             componentStyles
@@ -251,7 +262,7 @@ export function parseNode(node, context, componentStyles = null) {
         const children = Array.from(node.childNodes).map(child => parseNode(child, attrs)).filter(child => child !== null && child !== undefined);
         attrs.children = children;
         if (componentStyles) attrs.styles = componentStyles;
-        if (window.devWarn) devWarn('[parser.js/parseNode] Rendering custom component', { tagName, attrs });
+        window.devWarn('[parser.js/parseNode] Rendering custom component', { tagName: node.tagName, attrs });
         return componentFn(attrs);
     }
 
@@ -262,13 +273,11 @@ export function parseNode(node, context, componentStyles = null) {
     };
     const directiveResult = processDirectives(node, context, parsingContext);
     if (typeof directiveResult === 'function') {
-        // if (window.devWarn) devWarn('[parser.js/parseNode] Directive returned function for node', { node, context });
         return directiveResult;
     }
     const props = directiveResult || { attrs: {} };
     if (componentStyles) props.styles = componentStyles;
     const children = Array.from(node.childNodes).map(child => parseNode(child, context)).filter(Boolean);
-    // if (window.devWarn) devWarn('[parser.js/parseNode] Rendering normal element', { tagName, props, children });
     return Element(node.tagName.toLowerCase())({ ...props, children });
 }
 

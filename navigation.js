@@ -51,6 +51,59 @@ function buildGuards(routeMatch, type) {
   return [...global, ...routeGuards];
 }
 
+async function handleGuardResult(result, path) {
+  if (result === false) {
+    setPendingNavigation(null);
+    return false;
+  }
+  if (typeof result === 'string') {
+    setPendingNavigation(null);
+    navigate(result, { replace: true });
+    return false;
+  }
+  return true;
+}
+
+async function runLeaveGuards(currentRouteMatch, context) {
+  if (!currentRouteMatch) return true;
+  const leaveGuards = buildGuards(currentRouteMatch, 'beforeLeave');
+  const leaveResult = await runGuards(leaveGuards, context);
+  return handleGuardResult(leaveResult, context.path);
+}
+
+async function runEnterGuards(targetRouteMatch, context) {
+  if (!targetRouteMatch) return true;
+  const enterGuards = buildGuards(targetRouteMatch, 'beforeEnter');
+  const enterResult = await runGuards(enterGuards, context);
+  return handleGuardResult(enterResult, context.path);
+}
+
+async function handleScrollBehavior(targetRouteMatch, currentRouteMatch, path) {
+  let scrolled = false;
+  if (targetRouteMatch && targetRouteMatch.matched.length) {
+    // Find the deepest matched route with scrollBehavior
+    for (let i = targetRouteMatch.matched.length - 1; i >= 0; i--) {
+      const route = targetRouteMatch.matched[i].route;
+      if (typeof route.scrollBehavior === 'function') {
+        const scrollOptions = route.scrollBehavior({
+          from: currentRouteMatch,
+          to: targetRouteMatch,
+          path,
+          query: parseQuery(path.split('?')[1] || '')
+        });
+        if (scrollOptions && typeof window.scrollTo === 'function') {
+          window.scrollTo(scrollOptions);
+          scrolled = true;
+          break;
+        }
+      }
+    }
+  }
+  if (!scrolled) {
+    restoreScroll(path);
+  }
+}
+
 // --- Navigation ---
 export async function navigate(path, { replace = false, triggeredByPopstate = false } = {}) {
   if (pendingNavigation()) throw new Error('Navigation already in progress');
@@ -67,20 +120,10 @@ export async function navigate(path, { replace = false, triggeredByPopstate = fa
       path,
       query: parseQuery(path.split('?')[1] || '')
     };
-    // beforeLeave guards
-    if (currentRouteMatch) {
-      const leaveGuards = buildGuards(currentRouteMatch, 'beforeLeave');
-      const leaveResult = await runGuards(leaveGuards, context);
-      if (leaveResult === false) { setPendingNavigation(null); return; }
-      if (typeof leaveResult === 'string') { setPendingNavigation(null); return navigate(leaveResult, { replace: true }); }
-    }
-    // beforeEnter guards
-    if (targetRouteMatch) {
-      const enterGuards = buildGuards(targetRouteMatch, 'beforeEnter');
-      const enterResult = await runGuards(enterGuards, context);
-      if (enterResult === false) { setPendingNavigation(null); return; }
-      if (typeof enterResult === 'string') { setPendingNavigation(null); return navigate(enterResult, { replace: true }); }
-    }
+    
+    // Run guards
+    if (!(await runLeaveGuards(currentRouteMatch, context))) return;
+    if (!(await runEnterGuards(targetRouteMatch, context))) return;
 
     // All guards passed - mark navigation as pending and proceed to render
     setPendingNavigation(path);
@@ -93,30 +136,8 @@ export async function navigate(path, { replace = false, triggeredByPopstate = fa
     }
     setCurrentRoute(path);
 
-    // --- Custom scrollBehavior support ---
-    let scrolled = false;
-    if (targetRouteMatch && targetRouteMatch.matched.length) {
-      // Find the deepest matched route with scrollBehavior
-      for (let i = targetRouteMatch.matched.length - 1; i >= 0; i--) {
-        const route = targetRouteMatch.matched[i].route;
-        if (typeof route.scrollBehavior === 'function') {
-          const scrollOptions = route.scrollBehavior({
-            from: currentRouteMatch,
-            to: targetRouteMatch,
-            path,
-            query: parseQuery(path.split('?')[1] || '')
-          });
-          if (scrollOptions && typeof window.scrollTo === 'function') {
-            window.scrollTo(scrollOptions);
-            scrolled = true;
-            break;
-          }
-        }
-      }
-    }
-    if (!scrolled) {
-      restoreScroll(path);
-    }
+    // Handle scroll behavior
+    await handleScrollBehavior(targetRouteMatch, currentRouteMatch, path);
   } catch (err) {
     setErrorState(err);
     renderErrorView(err);
