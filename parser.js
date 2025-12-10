@@ -73,7 +73,7 @@ export async function parseComponent(htmlText) {
         const element = parseNode(nodes[0], otherContext, styles);
         return attachLifecycleHooksToElement(element, lifecycleHooks);
       } else if (nodes.length > 1) {
-        const children = nodes.map(n => parseNode(n, otherContext)).filter(Boolean);
+        const children = nodes.map(n => parseNode(n, otherContext, styles)).filter(Boolean);
         return Element('div')({ children, ...(styles && { styles }), ...lifecycleHooks });
       } else {
         return Element('div')({ children: 'No content', ...(styles && { styles }), ...lifecycleHooks });
@@ -249,7 +249,7 @@ export function parseNode(node, context, componentStyles = null) {
         window.devWarn('[parser.js/parseNode] Found custom component', { tagName: node.tagName, context });
         const attrs = parseNodeAttributes(node, context);
         const parsingContext = {
-            parseNode: (n, ctx) => parseNode(n, ctx || context),
+            parseNode: (n, ctx) => parseNode(n, ctx || context, componentStyles),
             componentStyles
         };
         const directiveResult = processDirectives(node, context, parsingContext);
@@ -259,7 +259,7 @@ export function parseNode(node, context, componentStyles = null) {
                 if (k !== 'attrs') attrs[k] = directiveResult[k];
             }
         }
-        const children = Array.from(node.childNodes).map(child => parseNode(child, attrs)).filter(child => child !== null && child !== undefined);
+        const children = Array.from(node.childNodes).map(child => parseNode(child, context, componentStyles)).filter(child => child !== null && child !== undefined);
         attrs.children = children;
         if (componentStyles) attrs.styles = componentStyles;
         window.devWarn('[parser.js/parseNode] Rendering custom component', { tagName: node.tagName, attrs });
@@ -268,7 +268,7 @@ export function parseNode(node, context, componentStyles = null) {
 
     // Normal element
     const parsingContext = {
-        parseNode: (n, ctx) => parseNode(n, ctx || context),
+        parseNode: (n, ctx) => parseNode(n, ctx || context, componentStyles),
         componentStyles
     };
     const directiveResult = processDirectives(node, context, parsingContext);
@@ -277,7 +277,7 @@ export function parseNode(node, context, componentStyles = null) {
     }
     const props = directiveResult || { attrs: {} };
     if (componentStyles) props.styles = componentStyles;
-    const children = Array.from(node.childNodes).map(child => parseNode(child, context)).filter(Boolean);
+    const children = Array.from(node.childNodes).map(child => parseNode(child, context, componentStyles)).filter(Boolean);
     return Element(node.tagName.toLowerCase())({ ...props, children });
 }
 
