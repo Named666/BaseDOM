@@ -26,7 +26,7 @@ export function createForm(initialValues = {}) {
         let formIsValid = true;
         for (const [name, validator] of Object.entries(validators)) {
             if (validator && fields[name]) {
-                const error = validator(fields[name]());
+                const error = validator(fields[name][0]());
                 if (error) {
                     newErrors[name] = error;
                     formIsValid = false;
@@ -76,7 +76,7 @@ export function createForm(initialValues = {}) {
                 try {
                     const values = {};
                     for (const [name, field] of Object.entries(fields)) {
-                        values[name] = field();
+                        values[name] = field[0]();
                     }
                     await onSubmit(values);
                     setSubmitError(null);
@@ -89,7 +89,7 @@ export function createForm(initialValues = {}) {
          },
         reset() {
             for (const [name, initialValue] of Object.entries(initialValues)) {
-                fields[name](initialValue);
+                fields[name][1](initialValue);
             }
             setErrors({});
             setTouched({});
@@ -197,7 +197,7 @@ export function Field({
                 const val = e.target.value;
                 if (onInput) onInput(val);
                 const form = useFormContext(e.target.form);
-                if (form) form.fields[name](val);
+                if (form) form.fields[name][1](val);
             },
             onBlur: e => {
                 if (rest.onBlur) rest.onBlur(e);
@@ -219,7 +219,7 @@ export function Field({
                 const val = e.target.value;
                 if (onInput) onInput(val);
                 const form = useFormContext(e.target.form);
-                if (form) form.fields[name](val);
+                if (form) form.fields[name][1](val);
             },
             onBlur: e => {
                 if (rest.onBlur) rest.onBlur(e);
@@ -242,7 +242,7 @@ export function Field({
                 const val = e.target.checked;
                 if (onInput) onInput(val);
                 const form = useFormContext(e.target.form);
-                if (form) form.fields[name](val);
+                if (form) form.fields[name][1](val);
             },
             onBlur: e => {
                 if (rest.onBlur) rest.onBlur(e);
@@ -269,7 +269,7 @@ export function Field({
                 if (type === 'number') val = parseFloat(val);
                 if (onInput) onInput(val);
                 const form = useFormContext(e.target.form);
-                if (form) form.fields[name](val);
+                if (form) form.fields[name][1](val);
             },
             onBlur: e => {
                 if (rest.onBlur) rest.onBlur(e);

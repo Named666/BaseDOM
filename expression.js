@@ -1,4 +1,4 @@
-// expression.jsS
+// expression.js
 
 /**
  * Safe expression parser that supports complex JavaScript expressions
@@ -180,7 +180,7 @@ class ExpressionParser {
      * @returns {string} The escaped string
      */
     escapeRegex(string) {
-        return string.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&');
+        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
 
     /**
