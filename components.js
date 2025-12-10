@@ -221,17 +221,6 @@ function setupLifecycleHooks(element, effectsToCleanup, { onMount, onUnmount, on
     onUnmount: effectsCleanup ? (onUnmount ? () => { effectsCleanup(); onUnmount(); } : effectsCleanup) : onUnmount,
     onUpdate
   });
-
-  // If there are effect cleanups, ensure they're cleaned up on unmount
-  if (effectsToCleanup.length > 0) {
-    attachLifecycleHooks(element, {
-      onUnmount: () => {
-        effectsToCleanup.forEach(cleanup => cleanup());
-        effectsToCleanup.length = 0;
-        if (typeof onUnmount === 'function') onUnmount();
-      }
-    });
-  }
 }
 
 /**
