@@ -49,7 +49,7 @@ function defineRoute(config, componentFn, guards = {}, isChild = false, inherite
   const routeObject = {
     path: finalPath,
     regex,
-    componentFn: routeConfig.component,
+    componentFn: component,
     paramNames,
     guards: routeConfig.guards || {},
     meta: combinedMeta,

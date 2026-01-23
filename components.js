@@ -67,7 +67,7 @@ function applyAttribute(el, key, value, effectsToCleanup) {
  * @param {string} styles - The CSS styles string.
  * @param {HTMLElement} element - The element to apply styles to.
  */
-function handleScopedStyles(styles, element) {
+export function handleScopedStyles(styles, element) {
   if (!styles || typeof styles !== 'string' || !styles.trim()) return;
 
   const styleHash = hashString(styles);

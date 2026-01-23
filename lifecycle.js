@@ -65,16 +65,38 @@ function processNodesRecursively(element, hookName, passElement = true, children
 
 
 /**
- * Calls onMount recursively on an element and all its children
- * @param {HTMLElement|DocumentFragment} el - The element to mount
+ * Recursively calls onMount for an element and its children.
+ * @param {Node} node - The node to mount.
  */
-export const callOnMountRecursive = el => processNodesRecursively(el, '__onMount', true, false);
+export function callOnMountRecursive(node) {
+  if (node.nodeType === Node.ELEMENT_NODE) {
+    if (typeof node.__onMount === 'function') node.__onMount();
+    for (const child of node.children) {
+      callOnMountRecursive(child);
+    }
+  } else if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
+    for (const child of node.childNodes) {
+      callOnMountRecursive(child);
+    }
+  }
+}
 
 /**
- * Calls onUnmount recursively on an element and all its children
- * @param {HTMLElement|DocumentFragment} el - The element to unmount
+ * Recursively calls onUnmount for an element and its children.
+ * @param {Node} node - The node to unmount.
  */
-export const callOnUnmountRecursive = el => processNodesRecursively(el, '__onUnmount', false, true);
+export function callOnUnmountRecursive(node) {
+  if (node.nodeType === Node.ELEMENT_NODE) {
+    if (typeof node.__onUnmount === 'function') node.__onUnmount();
+    for (const child of node.children) {
+      callOnUnmountRecursive(child);
+    }
+  } else if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
+    for (const child of node.childNodes) {
+      callOnUnmountRecursive(child);
+    }
+  }
+}
 
 /**
  * Calls onUpdate recursively on an element and all its children

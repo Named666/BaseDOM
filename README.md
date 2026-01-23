@@ -20,7 +20,6 @@ BaseDOM is a lightweight, reactive JavaScript framework for building dynamic web
 - Zero Build Setup: ES modules in browser.
 - Global State: Powerful store for complex state.
 - Navigation Guards: Protect routes.
-- Scroll Behavior: Custom scroll on navigation.
 - Link Interception: Automatic SPA navigation.
 
 ## Getting Started
@@ -324,7 +323,8 @@ Example:
 
 ## Contributing
 
-Open issues/PRs on GitHub.
+Open issues/PRs on GitHub for bugs, features, docs.
+https://github.com/Named666/BaseDOM
 
 ## TODO & Roadmap
 

@@ -4,6 +4,7 @@ import { computed } from './state.js';
 import { _reactive, evaluateExpression } from './expression.js';
 import { attachLifecycleHooks, wrapReactiveElement } from './lifecycle.js';
 import { getComponent } from './registry.js';
+import { handleScopedStyles } from './components.js';
 
 /**
  * Parses text content for {{...}} interpolation.
