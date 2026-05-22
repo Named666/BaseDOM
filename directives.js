@@ -81,7 +81,7 @@ export const xIfDirective = {
                 }
                 return null;
             } catch (error) {
-                if (window.devWarn) devWarn(`[directives.js/xIfDirective] Error evaluating x-if expression '${ifDirective}':`, error);
+                if (window.devWarn) window.devWarn(`[directives.js/xIfDirective] Error evaluating x-if expression '${ifDirective}':`, error);
                 return null;
             }
         });
@@ -155,7 +155,7 @@ export const xForDirective = {
                 return parseNode(nodeClone.cloneNode(true), loopContext);
             });
             } catch (error) {
-                if (window.devWarn) devWarn(`[directives.js/xForDirective] Error evaluating x-for expression '${listExpr}':`, error);
+                if (window.devWarn) window.devWarn(`[directives.js/xForDirective] Error evaluating x-for expression '${listExpr}':`, error);
                 return [];
             }
         });
@@ -241,7 +241,7 @@ export const xShowDirective = {
                 const shouldShow = evaluateExpression(showExpr, context);
                 return shouldShow ? '' : 'none';
             } catch (error) {
-                if (window.devWarn) devWarn(`[directives.js/xShowDirective] Error evaluating x-show expression '${showExpr}':`, error);
+                if (window.devWarn) window.devWarn(`[directives.js/xShowDirective] Error evaluating x-show expression '${showExpr}':`, error);
                 return 'none'; // Default to hidden on error
             }
         });
