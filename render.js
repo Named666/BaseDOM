@@ -1,7 +1,7 @@
 
 // render.js
 
-import { findMatchingRoute, parseQuery } from './router.js';
+import { findMatchingRoute, parseQuery, routes } from './router.js';
 import { renderComponent, createComponent } from './components.js';
 import { signal } from './state.js';
 import { parseComponent } from './parser.js';
@@ -128,7 +128,10 @@ export async function renderRoute(pathname) {
   }
   try {
     let element;
-    const [cleanPath, queryString] = pathname.split('?');
+    let notFoundElement;
+    const [rawPath, queryString] = pathname.split('?');
+    // Normalize path so it always starts with '/'
+    const cleanPath = rawPath === '' || rawPath == null ? '/' : (rawPath.startsWith('/') ? rawPath : `/${rawPath}`);
     const query = parseQuery(queryString || '');
     devWarn(`Rendering route: ${cleanPath}`);
     const match = findMatchingRoute(cleanPath);
@@ -141,7 +144,9 @@ export async function renderRoute(pathname) {
         return typeof t === 'function' ? t({ params, query }) : t;
       }).filter(Boolean).reverse();
       if (titles.length) {
-        document.title = titles.join(' / ');
+        // reverse the order of titles for proper hierarchy
+        titles.reverse();
+        document.title = titles.join('')
       }
 
   // Partial outlet update for leaf route
@@ -173,7 +178,30 @@ export async function renderRoute(pathname) {
     } else {
       document.title = '404 Not Found';
       devWarn(`Route not found: ${pathname}`);
-      element = createComponent('h1', { children: '404 Not Found' });
+      notFoundElement = createComponent('h1', { children: '404 Not Found' });
+      // Use the component: for the route with the longest matching prefix, or fallback to a simple message
+      // For example, /unknown would match a route with path /* and use its component, while /unknown/unknown would match /* and /unknown/* but prefer the latter if it exists
+      const fallbackRoute = findFallbackRoute(cleanPath);
+      if (fallbackRoute) {
+        devWarn(`Using fallback route for unmatched path: ${fallbackRoute.path}`);
+        // Pass children as a function to match how nested layouts receive their outlet content
+        const outletName = fallbackRoute.outlet || 'main';
+        const outletSelector = outletName === 'main'
+          ? '[x-outlet], [x-outlet="main"]'
+          : `[x-outlet="${outletName}"]`;
+        const outlet = document.querySelector(outletSelector);
+        const props = { params: {}, query, children: () => notFoundElement, outlet: outletName };
+        if (outlet) {
+          // Render only into the existing outlet (partial update) so the surrounding layout is preserved
+          renderComponent(() => notFoundElement, outlet);
+          return;
+        }
+        // Fallback to full root replacement if no outlet is present
+        const componentFn = await resolveComponent(fallbackRoute.componentFn);
+        element = componentFn(props);
+      } else {
+        element = notFoundElement;
+      }
     }
     setCurrentView(element);
     if (match) prevRoutes = match.matched.map(m => m.route);
@@ -188,6 +216,44 @@ export async function renderRoute(pathname) {
   }
 }
 
+export function findFallbackRoute(path) {
+  // Choose the fallback route by longest matching prefix.
+  devWarn(`Searching fallback for path: ${path}`);
+  try {
+    devWarn(`Available routes: ${routes.map(r => r.path).join(', ')}`);
+  } catch (e) {
+    devWarn('Could not list routes for debugging', e);
+  }
+  let fallback = null;
+  let longestPrefix = -1;
+  for (const route of routes) {
+    let prefix = null;
+    if (route.path === '*' || route.path === '/*') {
+      prefix = '';
+    } else if (route.path === '/') {
+      prefix = '/';
+    } else if (route.path.endsWith('/*')) {
+      prefix = route.path.slice(0, -2);
+    } else if (route.path.endsWith('*')) {
+      prefix = route.path.slice(0, -1);
+    } else {
+      // exact path (no wildcard) should only match itself; include as prefix
+      prefix = route.path;
+    }
+
+    devWarn(`Checking route '${route.path}' with prefix '${prefix}' against path '${path}'`);
+    if (prefix !== null && path.startsWith(prefix)) {
+      devWarn(`Prefix matched: '${prefix}' (len ${prefix.length})`);
+      if (prefix.length > longestPrefix) {
+        longestPrefix = prefix.length;
+        fallback = route;
+        devWarn(`New fallback selected: ${route.path}`);
+      }
+    }
+  }
+  devWarn(`Fallback result for '${path}': ${fallback ? fallback.path : 'none'}`);
+  return fallback;
+}
 
 export function escapeHtml(str) {
   return String(str)
