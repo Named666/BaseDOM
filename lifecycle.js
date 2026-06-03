@@ -149,6 +149,48 @@ export function replaceContent(container, newContent) {
 }
 
 /**
+ * Preserve elements marked with `x-preserve` during a swap operation.
+ * Moves preserved nodes to a hidden pantry, runs `swapFn`, then restores nodes
+ * to placeholders (matching by id) and triggers onMount for restored nodes.
+ * @param {HTMLElement} target - The container element where swap will occur
+ * @param {Function} swapFn - A function that performs the DOM swap
+ */
+export function preserveAndSwap(target, swapFn) {
+    if (!target || typeof swapFn !== 'function') return;
+    const pantryId = '--basedom-preserve-pantry--';
+    let pantry = document.getElementById(pantryId);
+    if (!pantry) {
+        pantry = document.createElement('div');
+        pantry.id = pantryId;
+        pantry.style.display = 'none';
+        document.body.appendChild(pantry);
+    }
+
+    // Move preserved nodes into pantry
+    const preserved = Array.from(target.querySelectorAll('[x-preserve]')).map(n => ({ id: n.id, node: n }));
+    preserved.forEach(p => { if (p.node && p.node.parentNode) pantry.appendChild(p.node); });
+
+    try {
+        // Execute the swap which may replace/alter children of target
+        swapFn();
+    } finally {
+        // Restore preserved nodes into placeholders (by id) or append if missing
+        for (const child of Array.from(pantry.children)) {
+            if (!child.id) continue;
+            const placeholder = document.getElementById(child.id);
+            if (placeholder && placeholder.parentNode) {
+                placeholder.parentNode.replaceChild(child, placeholder);
+            } else {
+                target.appendChild(child);
+            }
+            // Ensure mount hooks run for restored nodes
+            callOnMountRecursive(child);
+        }
+        if (pantry.parentNode) pantry.parentNode.removeChild(pantry);
+    }
+}
+
+/**
  * Creates a wrapper function for reactive elements that preserves lifecycle hooks
  * @param {Function} elementFunction - The reactive element function
  * @param {Object} hooks - The lifecycle hooks to attach

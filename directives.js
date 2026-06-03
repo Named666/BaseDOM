@@ -2,7 +2,54 @@
 import { computed } from './state.js';
 import { evaluateExpression, _reactive } from './expression.js';
 import { registerDirective, parseComponent } from './parser.js';
+import { navigate, attachLinkInterception } from './navigation.js';
 import { renderComponent } from './components.js';
+import { fetchAndSwap, makeFragment, findAndSwapOobElements, applyRawHtmlSwapToTarget, preserveElementsDuringSwap } from './fetch.js';
+
+// --- Helper utilities (htmx-like semantics) ---
+// Ensure BaseDOM link interception is enabled so `x-link`/navigation works
+if (typeof attachLinkInterception === 'function') attachLinkInterception();
+function parentElt(elt) {
+    const parent = elt.parentElement;
+    if (!parent && elt.parentNode instanceof ShadowRoot) return elt.parentNode;
+    return parent;
+}
+
+function getRawAttribute(elt, name) {
+    if (!(elt instanceof Element)) return null;
+    return elt.getAttribute(name) || elt.getAttribute('data-' + name);
+}
+
+function getAttributeValueWithDisinheritance(initialElement, ancestor, attributeName) {
+    const attributeValue = getRawAttribute(ancestor, attributeName);
+    const disinherit = getRawAttribute(ancestor, 'x-disinherit');
+    const inherit = getRawAttribute(ancestor, 'x-inherit');
+    if (initialElement !== ancestor) {
+        if (inherit && (inherit === '*' || inherit.split(' ').indexOf(attributeName) >= 0)) {
+            return attributeValue;
+        }
+        if (disinherit && (disinherit === '*' || disinherit.split(' ').indexOf(attributeName) >= 0)) {
+            return 'unset';
+        }
+    }
+    return attributeValue;
+}
+
+function getClosestAttributeValue(elt, attributeName) {
+    let closestAttr = null;
+    let node = elt;
+    while (node) {
+        const val = getAttributeValueWithDisinheritance(elt, node, attributeName);
+        if (val != null) {
+            closestAttr = val;
+            break;
+        }
+        node = parentElt(node);
+    }
+    if (closestAttr !== 'unset') return closestAttr;
+}
+
+// fetch-related helpers (makeFragment, OOB swaps, swap application, preserve) are provided by fetch.js
 
 /**
  * Directive Interface:
@@ -307,15 +354,21 @@ export const FetchDirective = {
         const { node, context } = parsingContext;
         // Collect fetch config from attributes
         const fetchAttrs = [
-            'x-get', 'x-post', 'x-swap', 'x-select', 'x-trigger',
-            'x-push-url', 'x-replace-url', 'x-target'
+            'x-get', 'x-post', 'x-put', 'x-patch', 'x-delete',
+            'x-swap', 'x-select', 'x-trigger',
+            'x-push-url', 'x-replace-url', 'x-target',
+            'x-headers', 'x-params', 'x-include', 'x-vals', 'x-encoding',
+            'x-confirm', 'x-indicator', 'x-timeout', 'x-boost'
         ];
+
         const fetchConfig = {};
         let hasFetch = false;
         for (const attr of fetchAttrs) {
-            if (node.hasAttribute(attr)) {
-                fetchConfig[attr] = node.getAttribute(attr);
-                props.attrs[attr] = node.getAttribute(attr);
+            const val = getClosestAttributeValue(node, attr);
+            if (val !== undefined) {
+                fetchConfig[attr] = val;
+                props.attrs = props.attrs || {};
+                props.attrs[attr] = val;
                 hasFetch = true;
             }
         }
@@ -325,121 +378,239 @@ export const FetchDirective = {
         props.ref = (el) => {
             if (!el) return;
             const tagName = node.tagName.toLowerCase();
-            const method = fetchConfig['x-post'] ? 'POST' : 'GET';
-            const url = fetchConfig['x-get'] || fetchConfig['x-post'];
+
+            // Determine method and URL
+            const method = fetchConfig['x-post'] ? 'POST'
+                         : fetchConfig['x-put'] ? 'PUT'
+                         : fetchConfig['x-patch'] ? 'PATCH'
+                         : fetchConfig['x-delete'] ? 'DELETE'
+                         : 'GET';
+
+            const url = fetchConfig['x-get'] || fetchConfig['x-post'] || fetchConfig['x-put'] || fetchConfig['x-patch'] || fetchConfig['x-delete'];
             if (!url) return;
 
             let trigger = fetchConfig['x-trigger'] || '';
             if (!trigger) {
-                trigger = (tagName === 'form' && method === 'POST') ? 'submit' : 'click';
+                trigger = (tagName === 'form' && (method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE')) ? 'submit' : 'click';
             }
 
             const handleEvent = async (evt) => {
-                if (tagName === 'form' && method === 'POST') {
+                // x-confirm: if present, evaluate and require true/confirmation
+                if (fetchConfig['x-confirm']) {
+                    let confirmVal = fetchConfig['x-confirm'];
+                    try { confirmVal = evaluateExpression(confirmVal, context); } catch (e) {}
+                    if (typeof confirmVal === 'function') confirmVal = confirmVal();
+                    if (confirmVal === false) return;
+                    if (confirmVal === true) {
+                        // continue
+                    } else if (typeof confirmVal === 'string') {
+                        if (!window.confirm(confirmVal)) return;
+                    }
+                }
+
+                if (tagName === 'form' && trigger === 'submit') {
                     evt.preventDefault();
                 }
-                try {
-                    let fetchOpts = { method };
-                    if (method === 'POST' && tagName === 'form') {
-                        fetchOpts.body = new FormData(el);
-                    }
-                    const resp = await fetch(url, fetchOpts);
-                    if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
-                    let html = await resp.text();
 
-                    // Handle content selection
-                    if (fetchConfig['x-select']) {
-                        const temp = document.createElement('div');
-                        temp.innerHTML = html;
-                        const sel = temp.querySelector(fetchConfig['x-select']);
-                        if (sel) {
-                            const swapMode = (fetchConfig['x-swap'] || '').toLowerCase();
-                            html = swapMode === 'innerhtml' ? sel.innerHTML : sel.outerHTML;
-                        }
-                    }
+                // Build fetch options
+                const controller = new AbortController();
+                const timeout = fetchConfig['x-timeout'] ? parseInt(fetchConfig['x-timeout'], 10) : 0;
+                if (timeout > 0) {
+                    setTimeout(() => controller.abort(), timeout);
+                }
 
-                    // Determine target element
-                    let target = el;
-                    if (fetchConfig['x-target']) {
-                        const targetEl = document.querySelector(fetchConfig['x-target']);
-                        if (targetEl) target = targetEl;
-                    }
+                let fetchOpts = { method, headers: {}, signal: controller.signal };
 
-                    // Check if the response looks like a BaseDOM component
-                    const isComponent = html.includes('<template>') || html.includes('<script>') || 
-                                       (html.includes('<style>') && (html.includes('<template>') || html.includes('<script>')));
-                    
-                    if (isComponent) {
-                        // Parse as BaseDOM component
+                // x-headers: allow JSON or key: value; evaluated if expression
+                if (fetchConfig['x-headers']) {
+                    let headersVal = fetchConfig['x-headers'];
+                    try { headersVal = evaluateExpression(headersVal, context); } catch (e) {}
+                    if (typeof headersVal === 'string') {
                         try {
-                            const componentFn = await parseComponent(html);
-                            const componentInstance = componentFn(context);
-                            
-                            // Apply the swap strategy using renderComponent
-                            const swap = (fetchConfig['x-swap'] || 'innerHTML').toLowerCase();
-                            if (swap === 'outerhtml') {
-                                // For outerHTML, we need to replace the target element entirely
-                                const wrapper = document.createElement('div');
-                                renderComponent(componentInstance, wrapper);
-                                target.outerHTML = wrapper.innerHTML;
-                            } else if (swap === 'append' || swap === 'beforeend') {
-                                const wrapper = document.createElement('div');
-                                renderComponent(componentInstance, wrapper);
-                                target.insertAdjacentHTML('beforeend', wrapper.innerHTML);
-                            } else if (swap === 'prepend' || swap === 'afterbegin') {
-                                const wrapper = document.createElement('div');
-                                renderComponent(componentInstance, wrapper);
-                                target.insertAdjacentHTML('afterbegin', wrapper.innerHTML);
-                            } else if (swap === 'beforebegin') {
-                                const wrapper = document.createElement('div');
-                                renderComponent(componentInstance, wrapper);
-                                target.insertAdjacentHTML('beforebegin', wrapper.innerHTML);
-                            } else if (swap === 'afterend') {
-                                const wrapper = document.createElement('div');
-                                renderComponent(componentInstance, wrapper);
-                                target.insertAdjacentHTML('afterend', wrapper.innerHTML);
-                            } else {
-                                // Default innerHTML - clear target and render component directly
-                                renderComponent(componentInstance, target);
-                            }
-                        } catch (componentError) {
-                            console.warn('Failed to parse response as BaseDOM component, falling back to raw HTML:', componentError);
-                            // Fallback to raw HTML insertion
-                            applyRawHtmlSwap(target, html, fetchConfig);
+                            const parsed = JSON.parse(headersVal);
+                            Object.assign(fetchOpts.headers, parsed);
+                        } catch (e) {
+                            // parse simple semicolon or newline separated headers
+                            headersVal.split(/[;\n]/).forEach(pair => {
+                                const idx = pair.indexOf(':');
+                                if (idx > -1) {
+                                    const k = pair.slice(0, idx).trim();
+                                    const v = pair.slice(idx+1).trim();
+                                    if (k) fetchOpts.headers[k] = v;
+                                }
+                            });
                         }
+                    } else if (typeof headersVal === 'object') {
+                        Object.assign(fetchOpts.headers, headersVal);
+                    }
+                }
+
+                // Build params/include/vals
+                const encoding = (fetchConfig['x-encoding'] || '').toLowerCase();
+                const valsRaw = fetchConfig['x-vals'];
+                let vals = null;
+                if (valsRaw) {
+                    try { vals = evaluateExpression(valsRaw, context); } catch (e) { try { vals = JSON.parse(valsRaw); } catch (e2) { vals = valsRaw; } }
+                }
+
+                // form handling and body building
+                let fetchUrl = url;
+                if (method === 'GET') {
+                    // For GET, include params and include into query string
+                    const urlObj = new URL(url, window.location.href);
+                    if (fetchConfig['x-params']) {
+                        let paramsVal = fetchConfig['x-params'];
+                        try { paramsVal = evaluateExpression(paramsVal, context); } catch (e) {}
+                        if (typeof paramsVal === 'string') {
+                            // parse key=val&...
+                            new URLSearchParams(paramsVal).forEach((v,k) => urlObj.searchParams.append(k,v));
+                        } else if (typeof paramsVal === 'object') {
+                            Object.entries(paramsVal).forEach(([k,v]) => urlObj.searchParams.append(k, v));
+                        }
+                    }
+                    if (fetchConfig['x-include']) {
+                        const sel = fetchConfig['x-include'];
+                        try {
+                            const nodes = document.querySelectorAll(sel);
+                            nodes.forEach(n => {
+                                if (n.name) urlObj.searchParams.append(n.name, n.value || n.textContent || '');
+                            });
+                        } catch (e) {}
+                    }
+                    // replace url with augmented one
+                    fetchUrl = urlObj.toString();
+                }
+
+                // For non-GET, build body
+                if (method !== 'GET') {
+                    if (encoding === 'json' || (vals && typeof vals === 'object' && ! (vals instanceof FormData))) {
+                        // send JSON body
+                        fetchOpts.headers['Content-Type'] = fetchOpts.headers['Content-Type'] || 'application/json';
+                        const bodyObj = {};
+                        if (fetchConfig['x-params']) {
+                            try { Object.assign(bodyObj, JSON.parse(fetchConfig['x-params'])); } catch(e) {}
+                        }
+                        if (vals && typeof vals === 'object') Object.assign(bodyObj, vals);
+                        // x-include: include named inputs from element
+                        if (fetchConfig['x-include']) {
+                            try {
+                                const nodes = document.querySelectorAll(fetchConfig['x-include']);
+                                nodes.forEach(n => { if (n.name) bodyObj[n.name] = n.value || n.textContent || ''; });
+                            } catch (e) {}
+                        }
+                        fetchOpts.body = JSON.stringify(bodyObj);
                     } else {
-                        // Not a component, use raw HTML insertion
-                        applyRawHtmlSwap(target, html, fetchConfig);
+                        // default: FormData for forms or URL-encoded
+                        const formData = new FormData();
+                        if (tagName === 'form') {
+                            try {
+                                const fd = new FormData(el);
+                                for (const pair of fd.entries()) formData.append(pair[0], pair[1]);
+                            } catch (e) {}
+                        }
+                        if (fetchConfig['x-params']) {
+                            let paramsVal = fetchConfig['x-params'];
+                            try { paramsVal = evaluateExpression(paramsVal, context); } catch (e) {}
+                            if (typeof paramsVal === 'string') {
+                                new URLSearchParams(paramsVal).forEach((v,k) => formData.append(k,v));
+                            } else if (typeof paramsVal === 'object') {
+                                Object.entries(paramsVal).forEach(([k,v]) => formData.append(k, v));
+                            }
+                        }
+                        if (vals && typeof vals === 'object') {
+                            Object.entries(vals).forEach(([k,v]) => formData.append(k, v));
+                        }
+                        if (fetchConfig['x-include']) {
+                            try {
+                                const nodes = document.querySelectorAll(fetchConfig['x-include']);
+                                nodes.forEach(n => { if (n.name) formData.append(n.name, n.value || n.textContent || ''); });
+                            } catch (e) {}
+                        }
+                        fetchOpts.body = formData;
+                    }
+                }
+
+                // Helper: apply swap of HTML into target
+                function applyRawHtmlSwap(target, html, fetchConfig) {
+                    const swap = (fetchConfig['x-swap'] || 'innerHTML').toLowerCase();
+                    if (swap === 'outerhtml') {
+                        target.outerHTML = html;
+                    } else if (swap === 'append' || swap === 'beforeend') {
+                        target.insertAdjacentHTML('beforeend', html);
+                    } else if (swap === 'prepend' || swap === 'afterbegin') {
+                        target.insertAdjacentHTML('afterbegin', html);
+                    } else if (swap === 'beforebegin') {
+                        target.insertAdjacentHTML('beforebegin', html);
+                    } else if (swap === 'afterend') {
+                        target.insertAdjacentHTML('afterend', html);
+                    } else {
+                        target.innerHTML = html;
+                    }
+                }
+
+                // Manage indicator: add/remove CSS class or toggle attribute
+                let indicatorNodes = [];
+                if (fetchConfig['x-indicator']) {
+                    try { indicatorNodes = Array.from(document.querySelectorAll(fetchConfig['x-indicator'])); } catch (e) { indicatorNodes = []; }
+                }
+                const addIndicator = () => indicatorNodes.forEach(n => n.classList.add('x-requesting'));
+                const removeIndicator = () => indicatorNodes.forEach(n => n.classList.remove('x-requesting'));
+
+                try {
+                    addIndicator();
+
+                    // Use centralized fetchAndSwap helper which now understands BaseDOM components
+                    const targetElementOption = fetchConfig['x-target'] === 'this' ? el : null;
+                    const targetSelectorOption = fetchConfig['x-target'] && fetchConfig['x-target'] !== 'this' ? fetchConfig['x-target'] : null;
+
+                    const result = await fetchAndSwap(fetchUrl, {
+                        method,
+                        headers: fetchOpts.headers,
+                        body: fetchOpts.body,
+                        swap: fetchConfig['x-swap'],
+                        targetElement: targetElementOption,
+                        targetSelector: targetSelectorOption,
+                        preserve: true,
+                        context,
+                        select: fetchConfig['x-select'],
+                        selectOob: fetchConfig['x-select-oob']
+                    });
+
+                    removeIndicator();
+
+                    if (!result || result.ok === false) {
+                        throw new Error(result && result.error ? result.error : 'Fetch failed');
                     }
 
-                    // Handle URL updates
-                    if (fetchConfig['x-push-url'] === 'true') {
-                        history.pushState({}, '', url);
-                    } else if (fetchConfig['x-replace-url'] === 'true') {
-                        history.replaceState({}, '', url);
+                    // Handle URL updates via BaseDOM navigation
+                    try {
+                        const pushVal = fetchConfig['x-push-url'];
+                        const replaceVal = fetchConfig['x-replace-url'];
+                        if (pushVal) {
+                            if (pushVal === 'true') {
+                                navigate(url);
+                            } else if (pushVal !== 'false') {
+                                navigate(pushVal);
+                            }
+                        } else if (replaceVal) {
+                            if (replaceVal === 'true') {
+                                navigate(url, { replace: true });
+                            } else if (replaceVal !== 'false') {
+                                navigate(replaceVal, { replace: true });
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('Navigation after fetch failed:', e);
                     }
                 } catch (error) {
-                    console.error('Fetch trigger error:', error);
+                    removeIndicator();
+                    if (error && error.name === 'AbortError') {
+                        console.error('Fetch request aborted (timeout).');
+                    } else {
+                        console.error('Fetch trigger error:', error);
+                    }
                 }
             };
-
-            // Helper function for raw HTML swapping
-            function applyRawHtmlSwap(target, html, fetchConfig) {
-                const swap = (fetchConfig['x-swap'] || 'innerHTML').toLowerCase();
-                if (swap === 'outerhtml') {
-                    target.outerHTML = html;
-                } else if (swap === 'append' || swap === 'beforeend') {
-                    target.insertAdjacentHTML('beforeend', html);
-                } else if (swap === 'prepend' || swap === 'afterbegin') {
-                    target.insertAdjacentHTML('afterbegin', html);
-                } else if (swap === 'beforebegin') {
-                    target.insertAdjacentHTML('beforebegin', html);
-                } else if (swap === 'afterend') {
-                    target.insertAdjacentHTML('afterend', html);
-                } else {
-                    target.innerHTML = html;
-                }
-            }
 
             el.addEventListener(trigger, handleEvent);
         };
@@ -620,6 +791,9 @@ registerDirective('x-model', xModelDirective);
 registerDirective('x-ref', xRefDirective);
 registerDirective('x-get', FetchDirective);
 registerDirective('x-post', FetchDirective);
+registerDirective('x-put', FetchDirective);
+registerDirective('x-patch', FetchDirective);
+registerDirective('x-delete', FetchDirective);
 registerDirective('x-mount', xMountDirective);
 registerDirective('x-unmount', xUnmountDirective);
 registerDirective('x-update', xUpdateDirective);
