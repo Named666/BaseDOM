@@ -210,14 +210,19 @@ function _reactive(value) {
     }
     // Handle functions (signals)
     if (typeof value === 'function') {
-        try {
-            const result = value();
-            // Recursively handle nested reactive values
-            return _reactive(result);
-        } catch (error) {
-            console.warn('Error getting reactive value:', error);
-            return undefined;
+        // Only invoke functions that appear to be reactive signals.
+        // Heuristic: signals expose a `set` method or have known markers.
+        if (typeof value.set === 'function' || value.__isSignal || value._isSignal) {
+            try {
+                const result = value();
+                return _reactive(result);
+            } catch (error) {
+                console.warn('Error getting reactive value:', error);
+                return undefined;
+            }
         }
+        // Otherwise, return the function reference (do not call plain handlers)
+        return value;
     }
     // Handle arrays - make them reactive-aware
     if (Array.isArray(value)) {

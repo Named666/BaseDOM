@@ -109,21 +109,19 @@ export const xIfDirective = {
             sibling = sibling.nextSibling;
         }
 
-        // Clone nodes to avoid modifying the original DOM
-        const ifNodeClone = node.cloneNode(true);
-        const elseNodeClone = elseNode ? elseNode.cloneNode(true) : null;
-        
-        // Remove directive attributes from clones
-        ifNodeClone.removeAttribute('x-if');
-        if (elseNodeClone) elseNodeClone.removeAttribute('x-else');
-
         return computed(() => {
             try {
                 const shouldShow = evaluateExpression(ifDirective, context);
                 
                 if (shouldShow) {
+                    // Clone the node fresh on each mount to ensure clean lifecycle hooks
+                    const ifNodeClone = node.cloneNode(true);
+                    ifNodeClone.removeAttribute('x-if');
                     return parseNode(ifNodeClone, context);
-                } else if (elseNodeClone) {
+                } else if (elseNode) {
+                    // Clone the node fresh on each mount to ensure clean lifecycle hooks
+                    const elseNodeClone = elseNode.cloneNode(true);
+                    elseNodeClone.removeAttribute('x-else');
                     return parseNode(elseNodeClone, context);
                 }
                 return null;
@@ -365,12 +363,13 @@ export const FetchDirective = {
         let hasFetch = false;
         for (const attr of fetchAttrs) {
             const val = getClosestAttributeValue(node, attr);
-            if (val !== undefined) {
-                fetchConfig[attr] = val;
-                props.attrs = props.attrs || {};
-                props.attrs[attr] = val;
-                hasFetch = true;
-            }
+            // Ignore undefined, null, or string 'null' so templates don't inject null attrs
+            if (val === undefined || val === null) continue;
+            if (typeof val === 'string' && val.trim().toLowerCase() === 'null') continue;
+            fetchConfig[attr] = val;
+            props.attrs = props.attrs || {};
+            props.attrs[attr] = val;
+            hasFetch = true;
         }
         if (!hasFetch) return;
 
@@ -751,6 +750,17 @@ export const xSlotDirective = {
             const slotContext = { ...context, ...slotProps };
             // Remove __slots from slotContext to avoid infinite recursion
             delete slotContext.__slots;
+            // If the registered node is a <template>, render its children (do not keep the <template> wrapper)
+            try {
+                if (nodeClone.tagName && nodeClone.tagName.toLowerCase() === 'template') {
+                    const contentRoot = nodeClone.content || nodeClone;
+                    const children = Array.from(contentRoot.childNodes || []).map(n => parseNode(n, slotContext)).filter(Boolean);
+                    // If a single child, return it directly; otherwise return the array
+                    return children.length === 1 ? children[0] : children;
+                }
+            } catch (e) {
+                // fall back to parsing the node itself on error
+            }
             return parseNode(nodeClone, slotContext);
         };
         // Do not render this node directly

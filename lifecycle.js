@@ -19,8 +19,14 @@ export function attachLifecycleHooks(element, hooks = {}) {
         if (typeof hooks[hook] === 'function') {
             const key = `__${hook}`;
             const existing = element[key];
+            console.log(`[lifecycle] Attaching ${hook} to element. Existing: ${!!existing}`);
             element[key] = existing
-                ? (...args) => { try { existing(...args); } catch (e) {} try { hooks[hook](...args); } catch (e) {} }
+                ? (...args) => { 
+                    console.log(`[lifecycle] Composite ${hook} - calling existing`);
+                    try { existing(...args); } catch (e) {} 
+                    console.log(`[lifecycle] Composite ${hook} - calling new`);
+                    try { hooks[hook](...args); } catch (e) {} 
+                }
                 : hooks[hook];
             // For onUpdate, allow programmatic triggering via element.onUpdate() TODO
             if (hook === 'onUpdate') {
@@ -48,11 +54,17 @@ function processNodesRecursively(element, hookName, passElement = true, children
         if (childrenFirst && node.children) Array.from(node.children).forEach(processNode);
         if (typeof node[hookName] === 'function') {
             // Only call onMount if not already mounted
-            if (hookName === '__onMount' && node.__mounted) return;
+            if (hookName === '__onMount' && node.__mounted) {
+                console.log(`[lifecycle] Skipping ${hookName} - already mounted`);
+                return;
+            }
             try {
+                console.log(`[lifecycle] Calling ${hookName} on node`);
                 passElement ? node[hookName](node) : node[hookName]();
                 if (hookName === '__onMount') node.__mounted = true;
-            } catch {}
+            } catch (e) {
+                console.error(`[lifecycle] Error in ${hookName}:`, e);
+            }
         }
         if (!childrenFirst && node.children) Array.from(node.children).forEach(processNode);
     };
@@ -69,16 +81,10 @@ function processNodesRecursively(element, hookName, passElement = true, children
  * @param {Node} node - The node to mount.
  */
 export function callOnMountRecursive(node) {
-  if (node.nodeType === Node.ELEMENT_NODE) {
-    if (typeof node.__onMount === 'function') node.__onMount();
-    for (const child of node.children) {
-      callOnMountRecursive(child);
-    }
-  } else if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
-    for (const child of node.childNodes) {
-      callOnMountRecursive(child);
-    }
-  }
+    // Use the generic walker to perform a mount traversal.
+    // This preserves existing behavior but centralizes traversal logic
+    // (calls node.__onMount and marks mounted nodes to avoid double-mounting).
+    processNodesRecursively(node, '__onMount', true, false);
 }
 
 /**
@@ -86,16 +92,18 @@ export function callOnMountRecursive(node) {
  * @param {Node} node - The node to unmount.
  */
 export function callOnUnmountRecursive(node) {
-  if (node.nodeType === Node.ELEMENT_NODE) {
-    if (typeof node.__onUnmount === 'function') node.__onUnmount();
-    for (const child of node.children) {
-      callOnUnmountRecursive(child);
+    // Use the generic walker to perform an unmount traversal.
+    // Children-first traversal ensures children unmount before their parent.
+    processNodesRecursively(node, '__onUnmount', true, true);
+    // Clear the __mounted flag to allow re-mounting
+    if (node.nodeType === Node.ELEMENT_NODE) {
+        node.__mounted = false;
+        if (node.children) Array.from(node.children).forEach(child => {
+            if (child.nodeType === Node.ELEMENT_NODE) {
+                child.__mounted = false;
+            }
+        });
     }
-  } else if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
-    for (const child of node.childNodes) {
-      callOnUnmountRecursive(child);
-    }
-  }
 }
 
 /**

@@ -64,6 +64,13 @@ export function signal(nameOrValue, initialValueIfPersistent) {
         }
     };
 
+    // Mark the getter so the expression evaluator can recognize signals
+    try {
+        get.set = set;
+        get.__isSignal = true;
+        get._isSignal = true;
+    } catch (e) {}
+
     return [get, set];
 }
 
@@ -151,6 +158,12 @@ export function computed(fn) {
     
     // Attach dispose method for cleanup
     getter.dispose = dispose;
-    
+
+    // Mark computed getter as a signal-like value so it will be auto-invoked
+    try {
+        getter.__isSignal = true;
+        getter._isSignal = true;
+    } catch (e) {}
+
     return getter;
 }

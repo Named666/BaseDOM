@@ -12,10 +12,18 @@ import { startRouter } from './router.js';
 // Import and register directives
 import './directives.js';
 export function startApp(rootSelector = '#app') {
-    function doStart() {
+    async function doStart() {
         startRouter();
         initialize(rootSelector);
-        renderRoute(location.pathname + location.search);
+        await renderRoute(location.pathname + location.search);
+        try {
+            const nav = await import('./navigation.js');
+            if (nav && typeof nav.setCurrentRoute === 'function') {
+                nav.setCurrentRoute(location.pathname + location.search);
+            }
+        } catch (e) {
+            devWarn('Failed to set initial currentRoute', e);
+        }
     }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', doStart, { once: true });

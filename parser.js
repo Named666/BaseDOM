@@ -4,7 +4,7 @@ import { computed } from './state.js';
 import { _reactive, evaluateExpression } from './expression.js';
 import { attachLifecycleHooks, wrapReactiveElement } from './lifecycle.js';
 import { getComponent } from './registry.js';
-import { handleScopedStyles } from './components.js';
+import { handleScopedStyles, normalizeAttrValue } from './components.js';
 
 /**
  * Parses text content for {{...}} interpolation.
@@ -77,7 +77,9 @@ export async function parseComponent(htmlText) {
       const lifecycleHooks = { onMount, onUnmount, onUpdate };
       if (nodes.length === 1) {
         const element = parseNode(nodes[0], otherContext, styles);
-        return attachLifecycleHooksToElement(element, lifecycleHooks);
+        if (typeof element === 'function') return wrapReactiveElement(element, lifecycleHooks);
+        if (element instanceof HTMLElement) return attachLifecycleHooks(element, lifecycleHooks);
+        return element;
       } else if (nodes.length > 1) {
         const children = nodes.map(n => parseNode(n, otherContext)).filter(Boolean);
         return Element('div')({ children, ...(styles && { styles }), ...lifecycleHooks });
@@ -168,11 +170,7 @@ function preprocessNodes(nodes) {
  * @param {object} hooks - Lifecycle hooks.
  * @returns {HTMLElement|Function}
  */
-function attachLifecycleHooksToElement(element, { onMount, onUnmount, onUpdate }) {
-    if (typeof element === 'function') return wrapReactiveElement(element, { onMount, onUnmount, onUpdate });
-    if (element instanceof HTMLElement) return attachLifecycleHooks(element, { onMount, onUnmount, onUpdate });
-    return element;
-}
+// Inline lifecycle handling by using lifecycle utilities directly where needed.
 
 /**
  * Processes directives on a node with a standardized interface.
@@ -230,9 +228,9 @@ function parseNodeAttributes(node, context) {
       if (/^\{\{.*\}\}$/.test(val.trim())) {
         val = (() => _reactive(evaluateExpression(val.trim().slice(2, -2), context)));
       }
-      attrs[propName] = val;
+      attrs[propName] = normalizeAttrValue(val);
     } else {
-      attrs[attr.name] = val;
+      attrs[attr.name] = normalizeAttrValue(val);
     }
   }
   return attrs;

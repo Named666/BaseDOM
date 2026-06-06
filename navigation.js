@@ -107,11 +107,14 @@ async function handleScrollBehavior(targetRouteMatch, currentRouteMatch, path) {
 // --- Navigation ---
 export async function navigate(path, { replace = false, triggeredByPopstate = false } = {}) {
   if (pendingNavigation()) throw new Error('Navigation already in progress');
-  const currentPath = location.pathname + location.search;
-  if (path === currentPath && !replace) return;
-  saveScroll(currentPath, window.scrollX, window.scrollY);
+  // Determine the previous (current) path. Prefer the `currentRoute` signal if available
+  // because when `popstate` fires `location` is already the new URL.
+  const prevPath = currentRoute() || (location.pathname + location.search);
+  if (path === prevPath && !replace && !triggeredByPopstate) return;
+  // Only save scroll for navigations initiated by the app (not browser back/forward)
+  if (!triggeredByPopstate) saveScroll(prevPath, window.scrollX, window.scrollY);
   try {
-    const currentRouteMatch = findMatchingRoute(currentPath.split('?')[0]);
+    const currentRouteMatch = findMatchingRoute((prevPath || '').split('?')[0]);
     const [targetPath] = path.split('?');
     const targetRouteMatch = findMatchingRoute(targetPath);
     const context = {
@@ -130,10 +133,12 @@ export async function navigate(path, { replace = false, triggeredByPopstate = fa
 
     // Render route and update signals
     await renderRoute(path);
+    // Only modify browser history for navigations initiated by the app
     if (!triggeredByPopstate) {
       if (replace) history.replaceState({}, '', path);
       else history.pushState({}, '', path);
     }
+    // Update the `currentRoute` signal so future popstate handlers know the origin
     setCurrentRoute(path);
 
     // Handle scroll behavior

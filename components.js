@@ -8,6 +8,23 @@ import {
   safeAppendElement
 } from './lifecycle.js';
 
+/**
+ * Normalize an attribute value into a canonical JS type for application.
+ * - Converts string "true"/"false" to booleans.
+ * - Leaves functions, objects, booleans, and other values untouched.
+ * This is intentionally minimal to avoid changing existing behavior.
+ * @param {*} value
+ * @returns {*}
+ */
+export function normalizeAttrValue(value) {
+  if (typeof value === 'string') {
+    const v = value.trim();
+    if (v === 'true') return true;
+    if (v === 'false') return false;
+  }
+  return value;
+}
+
 // Utility: Generate a scoped class name from a string
 function hashString(str) {
   let hash = 0;
@@ -28,6 +45,7 @@ const injectedStyles = new Set();
  * @param {Array} effectsToCleanup - Array to collect cleanup functions.
  */
 function applyAttribute(el, key, value, effectsToCleanup) {
+  value = normalizeAttrValue(value);
   if (key.startsWith('on') && typeof value === 'function') {
     const eventName = key.slice(2).toLowerCase();
     const handlerProp = `__${eventName}_handler`;
@@ -166,13 +184,19 @@ function appendChildToElement(element, child, effectsToCleanup) {
       } else {
         newNodes.push(document.createTextNode(String(reactiveValue)));
       }
-      // Remove old nodes
+      // Remove old nodes - call unmount BEFORE inserting new ones
+      if (currentChildNodes.length > 0) {
+        console.log('[appendChildToElement] Unmounting', currentChildNodes.length, 'old nodes');
+      }
       currentChildNodes.forEach(node => {
         if (node.nodeType === Node.ELEMENT_NODE) callOnUnmountRecursive(node);
         if (node.parentNode === element) element.removeChild(node);
       });
       currentChildNodes = [];
-      // Insert new nodes
+      // Insert new nodes - call mount AFTER removing old ones
+      if (newNodes.length > 0) {
+        console.log('[appendChildToElement] Mounting', newNodes.length, 'new nodes');
+      }
       newNodes.forEach(newNode => {
         element.insertBefore(newNode, marker);
         currentChildNodes.push(newNode);
@@ -211,27 +235,25 @@ function appendChildToElement(element, child, effectsToCleanup) {
  * @param {Object} hooks - The lifecycle hooks {onMount, onUnmount, onUpdate}.
  */
 function setupLifecycleHooks(element, effectsToCleanup, { onMount, onUnmount, onUpdate }) {
-  const effectsCleanup = effectsToCleanup.length > 0 ? () => {
+  // Compose a single onUnmount that runs effect cleanup then the user-provided onUnmount.
+  const effectsCleanup = () => {
+    if (effectsToCleanup.length === 0) return;
     effectsToCleanup.forEach(cleanup => cleanup());
     effectsToCleanup.length = 0;
-  } : null;
+  };
+
+  const composedOnUnmount = (...args) => {
+    try { effectsCleanup(); } catch (e) {}
+    if (typeof onUnmount === 'function') {
+      try { onUnmount(...args); } catch (e) {}
+    }
+  };
 
   attachLifecycleHooks(element, {
     onMount,
-    onUnmount: effectsCleanup ? (onUnmount ? () => { effectsCleanup(); onUnmount(); } : effectsCleanup) : onUnmount,
+    onUnmount: composedOnUnmount,
     onUpdate
   });
-
-  // If there are effect cleanups, ensure they're cleaned up on unmount
-  if (effectsToCleanup.length > 0) {
-    attachLifecycleHooks(element, {
-      onUnmount: () => {
-        effectsToCleanup.forEach(cleanup => cleanup());
-        effectsToCleanup.length = 0;
-        if (typeof onUnmount === 'function') onUnmount();
-      }
-    });
-  }
 }
 
 /**
@@ -293,10 +315,24 @@ export function createComponent(tag, options = {}) {
  */
 export function renderComponent(component, container) {
   replaceContent(container, null); // Unmount existing content
-  const el = typeof component === 'function' ? component() : component;
-  if (el instanceof HTMLElement || el instanceof DocumentFragment) {
-    safeAppendElement(container, el);
+  if (typeof component === 'function') {
+    // Make the renderer reactive: re-run the component function when its
+    // reactive dependencies change and update the container accordingly.
+    effect(() => {
+      replaceContent(container, null);
+      const el = component();
+      if (el instanceof HTMLElement || el instanceof DocumentFragment) {
+        safeAppendElement(container, el);
+      } else {
+        container.textContent = String(el);
+      }
+    });
   } else {
-    container.textContent = String(el);
+    const el = component;
+    if (el instanceof HTMLElement || el instanceof DocumentFragment) {
+      safeAppendElement(container, el);
+    } else {
+      container.textContent = String(el);
+    }
   }
 }

@@ -81,7 +81,8 @@ function setupRootElement(selector) {
     devWarn(`Setting up root element at selector: ${selector}`, el);
     rootElement = el;
     rootElementSelector = selector;
-    renderComponent(createComponent('div', { children: [currentView] }), rootElement);
+    // Render the currentView directly (renderComponent is reactive now)
+    renderComponent(currentView, rootElement);
   } else {
     devWarn(`Root element not found for selector: ${selector}`);
   }
