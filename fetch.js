@@ -2,7 +2,7 @@
   
 import { parseComponent } from './parser.js';
 import { renderComponent } from './components.js';
-import { preserveAndSwap, safeAppendElement, replaceContent } from './lifecycle.js';
+import { preserveAndSwap, safeAppendElement, replaceContent, callOnMountRecursive, callOnUnmountRecursive } from './lifecycle.js';
 
 function getRawAttribute(elt, name) {
   if (!(elt instanceof Element)) return null;
@@ -35,26 +35,62 @@ function makeFragment(response) {
 }
 
 function applyRawHtmlSwapToTarget(target, html, swapStyle) {
-  switch ((swapStyle || 'innerHTML').toLowerCase()) {
-    case 'outerhtml':
-      target.outerHTML = html; break;
-    case 'textcontent':
-      target.textContent = html; break;
-    case 'afterbegin':
-      target.insertAdjacentHTML('afterbegin', html); break;
-    case 'beforebegin':
-      target.insertAdjacentHTML('beforebegin', html); break;
-    case 'beforeend':
-      target.insertAdjacentHTML('beforeend', html); break;
-    case 'afterend':
-      target.insertAdjacentHTML('afterend', html); break;
-    case 'delete':
+  const style = (swapStyle || 'innerHTML').toLowerCase();
+  // Helper to parse html into nodes
+  const parseHtmlToNodes = (h) => {
+    const temp = document.createElement('div');
+    temp.innerHTML = h;
+    return Array.from(temp.childNodes);
+  };
+
+  try {
+    if (style === 'outerhtml') {
+      const parent = target.parentNode;
+      if (!parent) return;
+      const newNodes = parseHtmlToNodes(html);
+      try { callOnUnmountRecursive(target); } catch (e) {}
+      for (const n of newNodes) parent.insertBefore(n, target);
+      parent.removeChild(target);
+      for (const n of newNodes) if (n.nodeType === Node.ELEMENT_NODE) try { callOnMountRecursive(n); } catch (e) {}
+      return;
+    }
+
+    if (style === 'textcontent') {
+      // Unmount element children before replacing text
+      try { Array.from(target.children).forEach(callOnUnmountRecursive); } catch (e) {}
+      target.textContent = html;
+      return;
+    }
+
+    if (['afterbegin','beforebegin','beforeend','afterend'].includes(style)) {
+      const nodes = parseHtmlToNodes(html);
+      for (const n of nodes) {
+        try {
+          if (style === 'afterbegin') target.insertBefore(n, target.firstChild);
+          else if (style === 'beforebegin' && target.parentNode) target.parentNode.insertBefore(n, target);
+          else if (style === 'beforeend') target.appendChild(n);
+          else if (style === 'afterend' && target.parentNode) target.parentNode.insertBefore(n, target.nextSibling);
+        } catch (e) {}
+        if (n.nodeType === Node.ELEMENT_NODE) try { callOnMountRecursive(n); } catch (e) {}
+      }
+      return;
+    }
+
+    if (style === 'delete') {
+      try { callOnUnmountRecursive(target); } catch (e) {}
       if (target.parentNode) target.parentNode.removeChild(target);
-      break;
-    case 'none':
-      break;
-    default:
-      target.innerHTML = html; break;
+      return;
+    }
+
+    if (style === 'none') return;
+
+    // default: innerHTML - unmount existing children, replace, then mount new children
+    try { Array.from(target.children).forEach(callOnUnmountRecursive); } catch (e) {}
+    target.innerHTML = html;
+    try { Array.from(target.children).forEach(child => { if (child.nodeType === Node.ELEMENT_NODE) callOnMountRecursive(child); }); } catch (e) {}
+  } catch (e) {
+    // Fallback to direct assignment if anything goes wrong
+    try { target.innerHTML = html; } catch (err) {}
   }
 }
 
@@ -92,33 +128,7 @@ function findAndSwapOobElements(fragment) {
   return oobElts.length > 0;
 }
 
-function preserveElementsDuringSwap(target, frag) {
-  const pantryId = '--basedom-preserve-pantry--';
-  let pantry = document.getElementById(pantryId);
-  if (!pantry) {
-    pantry = document.createElement('div');
-    pantry.id = pantryId;
-    pantry.style.display = 'none';
-    document.body.appendChild(pantry);
-  }
-  const preserved = Array.from(target.querySelectorAll('[x-preserve]')).map(n => ({ id: n.id, node: n }));
-  preserved.forEach(p => { if (p.node && p.node.parentNode) pantry.appendChild(p.node); });
 
-  return function restore() {
-    for (const child of Array.from(pantry.children)) {
-      const id = child.id;
-      if (!id) continue;
-      const selector = '#' + CSS.escape(id);
-      const dest = target.querySelector(selector);
-      if (dest) {
-        dest.parentNode.replaceChild(child, dest);
-      } else {
-        target.appendChild(child);
-      }
-    }
-    if (pantry.parentNode) pantry.parentNode.removeChild(pantry);
-  };
-}
 
 async function fetchAndSwap(url, options = {}) {
   const {
@@ -177,8 +187,7 @@ async function fetchAndSwap(url, options = {}) {
   const target = targetElement || (targetSelector ? document.querySelector(targetSelector) : document.body);
   if (!target) return { ok: false, error: 'No target element' };
 
-  let restoreFn = null;
-  if (preserve) restoreFn = preserveElementsDuringSwap(target, fragment);
+  const usingPreserve = !!preserve;
 
   // Parse swap spec (style + modifiers) like "innerHTML swap:1s settle:100ms show:top transition:true"
   function parseTime(t) {
@@ -373,6 +382,12 @@ async function fetchAndSwap(url, options = {}) {
       }
     };
 
+    // If preserve option set, wrap doSwap so preserved nodes are handled by lifecycle.preserveAndSwap
+    if (usingPreserve) {
+      const _origDoSwap = doSwap;
+      doSwap = () => preserveAndSwap(target, () => _origDoSwap());
+    }
+
     // schedule swap after swapDelay then run settle actions after settleDelay
     const run = async () => {
       if (swapSpec.swapDelay > 0) await new Promise(r => setTimeout(r, swapSpec.swapDelay));
@@ -390,9 +405,9 @@ async function fetchAndSwap(url, options = {}) {
     applyRawHtmlSwapToTarget(target, html, swap);
   }
 
-  if (restoreFn) restoreFn();
+  // preserveAndSwap handles restoring preserved nodes; nothing else to do here
 
   return { ok: true, fragment };
 }
 
-export { fetchAndSwap, makeFragment, findAndSwapOobElements, applyRawHtmlSwapToTarget, preserveElementsDuringSwap };
+export { fetchAndSwap, makeFragment, findAndSwapOobElements, applyRawHtmlSwapToTarget };

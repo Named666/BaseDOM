@@ -4,7 +4,7 @@ import { evaluateExpression, _reactive } from './expression.js';
 import { registerDirective, parseComponent } from './parser.js';
 import { navigate, attachLinkInterception } from './navigation.js';
 import { renderComponent } from './components.js';
-import { fetchAndSwap, makeFragment, findAndSwapOobElements, applyRawHtmlSwapToTarget, preserveElementsDuringSwap } from './fetch.js';
+import { fetchAndSwap } from './fetch.js';
 
 // --- Helper utilities (htmx-like semantics) ---
 // Ensure BaseDOM link interception is enabled so `x-link`/navigation works
@@ -373,9 +373,21 @@ export const FetchDirective = {
         }
         if (!hasFetch) return;
 
-        // Attach fetch handler after render
-        props.ref = (el) => {
+        // Attach fetch handler after render. Use lifecycle hooks (`onMount`/`onUnmount`) so
+        // the component lifecycle system manages listener cleanup.
+        let _attachedEl = null;
+        let _attachedTrigger = null;
+        let _attachedHandler = null;
+
+        props.onMount = (el) => {
             if (!el) return;
+            // If previously attached to a different element, clean up first
+            try {
+                if (_attachedEl && _attachedHandler && _attachedTrigger) {
+                    _attachedEl.removeEventListener(_attachedTrigger, _attachedHandler);
+                }
+            } catch (e) {}
+            _attachedEl = el;
             const tagName = node.tagName.toLowerCase();
 
             // Determine method and URL
@@ -393,7 +405,9 @@ export const FetchDirective = {
                 trigger = (tagName === 'form' && (method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE')) ? 'submit' : 'click';
             }
 
-            const handleEvent = async (evt) => {
+            _attachedTrigger = trigger;
+
+            _attachedHandler = async (evt) => {
                 // x-confirm: if present, evaluate and require true/confirmation
                 if (fetchConfig['x-confirm']) {
                     let confirmVal = fetchConfig['x-confirm'];
@@ -529,23 +543,7 @@ export const FetchDirective = {
                     }
                 }
 
-                // Helper: apply swap of HTML into target
-                function applyRawHtmlSwap(target, html, fetchConfig) {
-                    const swap = (fetchConfig['x-swap'] || 'innerHTML').toLowerCase();
-                    if (swap === 'outerhtml') {
-                        target.outerHTML = html;
-                    } else if (swap === 'append' || swap === 'beforeend') {
-                        target.insertAdjacentHTML('beforeend', html);
-                    } else if (swap === 'prepend' || swap === 'afterbegin') {
-                        target.insertAdjacentHTML('afterbegin', html);
-                    } else if (swap === 'beforebegin') {
-                        target.insertAdjacentHTML('beforebegin', html);
-                    } else if (swap === 'afterend') {
-                        target.insertAdjacentHTML('afterend', html);
-                    } else {
-                        target.innerHTML = html;
-                    }
-                }
+                // Raw HTML swap is handled centrally by `fetchAndSwap`/`fetch.js`.
 
                 // Manage indicator: add/remove CSS class or toggle attribute
                 let indicatorNodes = [];
@@ -611,7 +609,22 @@ export const FetchDirective = {
                 }
             };
 
-            el.addEventListener(trigger, handleEvent);
+            // attach handler; lifecycle will handle cleanup via onUnmount
+            try {
+                el.addEventListener(_attachedTrigger, _attachedHandler);
+            } catch (e) {}
+        };
+
+        // Ensure the listener is removed when element unmounts via lifecycle
+        props.onUnmount = () => {
+            try {
+                if (_attachedEl && _attachedHandler && _attachedTrigger) {
+                    _attachedEl.removeEventListener(_attachedTrigger, _attachedHandler);
+                }
+            } catch (e) {}
+            _attachedEl = null;
+            _attachedHandler = null;
+            _attachedTrigger = null;
         };
     }
 };
