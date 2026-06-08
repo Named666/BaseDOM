@@ -9,6 +9,7 @@
     "components.js",
     "directives.js",
     "expression.js",
+    "fetch.js",
     "form.js",
     "html.js",
     "index.js",

@@ -1,26 +1,26 @@
 # BaseDOM
 
-BaseDOM is a lightweight, reactive JavaScript framework for building dynamic web applications without build setup. Features signal-based reactivity, declarative components, and powerful directives using native ES modules.
+BaseDOM is a lightweight, reactive JavaScript framework for building dynamic web applications without build setup. It features signal-based reactivity, declarative components, and powerful directives using native ES modules.
 
 ## Philosophy
 
 - **HTML-Centric:** Build with familiar HTML syntax in Single-File Components (.html).
-- **Declarative & Reactive:** UI as function of state with fine-grained reactivity.
+- **Declarative & Reactive:** UI as a function of state with fine-grained reactivity.
 - **Component-Based:** Reusable, self-contained components.
 - **Progressively Adoptable:** Start small, scale up.
+- **Zero Build Setup:** Run directly in the browser using ES modules.
 
 ## Key Features
 
-- Signal-based Reactivity: `signal`, `computed`, `effect`.
-- Single-File Components: HTML, CSS, JS in one file with scoped styles.
-- Component Composition: Nest components declaratively.
-- Lifecycle Hooks: `onMount`, `onUnmount`, `onUpdate`.
-- Declarative AJAX: Load content with HTML attributes.
-- SPA Routing: Nested routes, guards, navigation.
-- Zero Build Setup: ES modules in browser.
-- Global State: Powerful store for complex state.
-- Navigation Guards: Protect routes.
-- Link Interception: Automatic SPA navigation.
+- **Signal-based Reactivity:** Fine-grained updates with `signal`, `computed`, and `effect`.
+- **Persistent State:** Signals can automatically sync with `sessionStorage`.
+- **Single-File Components:** HTML, CSS, and JS in one file with scoped styles.
+- **Nested Routing:** Powerful router with nested routes, layouts, and parameter matching.
+- **Navigation Guards:** Global and route-specific guards (`beforeEnter`, `beforeLeave`).
+- **Declarative AJAX:** HTMX-inspired fetch directives (`x-get`, `x-post`, etc.) with component rendering support.
+- **Global Store:** Feature-rich store for structured and tabular data with transaction support.
+- **Form System:** Comprehensive form management with validation, state tracking, and UI components.
+- **Lifecycle Hooks:** `onMount`, `onUnmount`, and `onUpdate` hooks for components and elements.
 
 ## Getting Started
 
@@ -41,31 +41,25 @@ BaseDOM is a lightweight, reactive JavaScript framework for building dynamic web
    </html>
    ```
 
-3. Create component `components/Counter.html`:
+3. Create a component `components/Counter.html`:
 
    ```html
    <template>
      <div class="counter">
        <h1>{{ message }}</h1>
        <p>Count: {{ count }}</p>
-       <button x-on:click="increment">Increment</button>
+       <button @click="increment">Increment</button>
        <input x-model="message">
      </div>
    </template>
 
-   <script>
+   <script setup>
    import { signal } from '../basedom/state.js';
 
-   export default function() {
-     const [count, setCount] = signal(0);
-     const [message, setMessage] = signal('Hello, BaseDOM!');
+   const [count, setCount] = signal(0);
+   const [message, setMessage] = signal('Hello, BaseDOM!');
 
-     return {
-       count,
-       message,
-       increment: () => setCount(count() + 1)
-     };
-   }
+   const increment = () => setCount(count() + 1);
    </script>
 
    <style>
@@ -84,347 +78,325 @@ BaseDOM is a lightweight, reactive JavaScript framework for building dynamic web
    startApp('#app');
    ```
 
-5. Serve with `python -m http.server` or `npx serve .`.
-
 ## Core Concepts
 
-### Single-File Components
+### Reactivity
 
-Components are .html files with `<template>`, `<script>`, `<style>` sections. Styles are scoped.
+BaseDOM uses a signal-based reactivity system similar to SolidJS or Preact Signals.
+
+- `signal(initial)`: Returns `[getter, setter]`.
+- `signal(key, initial)`: **Persistent Signal**. Automatically syncs with `sessionStorage`.
+- `computed(fn)`: A read-only signal that re-calcules when dependencies change.
+- `effect(fn)`: Runs a side effect and tracks dependencies.
+
+```javascript
+const [count, setCount] = signal(0);
+const [user, setUser] = signal('user_pref', { theme: 'dark' }); // Persistent
+const double = computed(() => count() * 2);
+
+effect(() => {
+  console.log('Count is:', count());
+  console.log('Doubled:', double());
+});
+```
+
+### Single-File Components (.html)
+
+Components are `.html` files containing `<template>`, `<script>`, and `<style>`.
 
 #### `<script setup>` Mode
-
-Concise way to write logic. Top-level variables are exposed to template.
+Top-level variables are automatically exposed to the template.
 
 ```html
-<template>
-  <div>
-    <p>Count: {{ count }}</p>
-    <button @click="increment">+</button>
-  </div>
-</template>
-
 <script setup>
-const [count, setCount] = signal(0);
-function increment() { setCount(count() + 1); }
+import { signal } from './basedom/state.js';
+const [name, setName] = signal('World');
+function greet() { alert(`Hello ${name()}!`); }
 </script>
+
+<template>
+  <button @click="greet">Greet {{ name }}</button>
+</template>
 ```
 
 ### Component Composition
 
-Use custom tags. Pass props with `:prop="value"`, events with `@event="handler"`.
+Nest components declaratively by using their registered tag names. Data flows down via **props** and up via **events**.
 
-Example:
+#### Passing Props
+Use the `:` prefix to bind reactive data or JavaScript expressions to props.
 
 ```html
-<!-- Parent -->
+<!-- Parent.html -->
 <template>
-  <MyComponent :title="'Hello'" @click="handleClick"></MyComponent>
-</template>
-
-<!-- MyComponent.html -->
-<template>
-  <h1>{{ title }}</h1>
-  <button @click="$emit('click')">Click me</button>
+  <UserCard :user="currentUser" :theme="'dark'" />
 </template>
 ```
 
-### Slots
-
-- Default: `<slot></slot>`
-- Named: `<slot name="name"></slot>`, use `x-slot="name"`
-- Slot props: `<slot :prop="value"></slot>`, access in parent.
-
-Example:
+#### Handling Events
+Use the `@` prefix (or `x-on:`) to listen for custom events or standard DOM events emitted by child components.
 
 ```html
-<!-- Child -->
+<!-- Parent.html -->
 <template>
-  <slot name="header" :user="currentUser"></slot>
-  <slot></slot>
-</template>
-
-<!-- Parent -->
-<template>
-    <div x-slot="header">{{ user.name }}</div>
-    <p>Default content</p>
+  <Counter @update="handleUpdate" @reset="count = 0" />
 </template>
 ```
 
-### Reactivity
+### Slots & Scoped Slots
 
-- `signal(initial)`: [getter, setter]
-- `computed(fn)`: Derived signal
-- `effect(fn)`: Side effects
+BaseDOM supports powerful slot composition.
 
-Example:
+**Child Component (`Card.html`):**
+```html
+<template>
+  <div class="card">
+    <header><slot name="header">Default Header</slot></header>
+    <section><slot :item="internalData">Default Content</slot></section>
+  </div>
+</template>
+```
+
+**Parent Usage:**
+```html
+<template>
+  <Card>
+    <h1 x-slot="header">Custom Title</h1>
+    <!-- Scoped Slot: 'item' is passed from Card.html -->
+    <p x-slot="default" :item="data">{{ data.description }}</p>
+  </Card>
+</template>
+```
+
+## Template Directives
+
+BaseDOM provides a rich set of directives for declarative DOM manipulation.
+
+| Directive | Description | Example |
+|-----------|-------------|---------|
+| `x-if` | Conditional rendering. | `<div x-if="isVisible">Shown</div>` |
+| `x-else` | Paired with `x-if` for alternative rendering. | `<div x-else>Hidden</div>` |
+| `x-for` | List rendering with `item in items` syntax. | `<li x-for="item in list">{{ item }}</li>` |
+| `x-on:[event]` | Event listener. Alias: `@[event]`. | `<button @click="doWork">` |
+| `x-bind:[attr]` | Attribute binding. Alias: `:[attr]`. | `<img :src="avatarUrl">` |
+| `x-model` | Two-way binding for inputs, selects, etc. | `<input x-model="name">` |
+| `x-show` | Toggle visibility using `display: none`. | `<div x-show="isOpen">` |
+| `x-ref` | Assign element to a variable in context. | `<canvas x-ref="canvas">` |
+| `x-mount` | Lifecycle hook: called when mounted. | `<div x-mount="init">` |
+| `x-unmount` | Lifecycle hook: called when unmounted. | `<div x-unmount="cleanup">` |
+| `x-update` | Lifecycle hook: called when updated. | `<div x-update="refresh">` |
+| `slot` | Define a placeholder for content. | `<slot name="title">` |
+| `x-slot` | Provide content for a named slot. | `<div x-slot="title">` |
+| `x-get` | AJAX: Perform a GET request. | `<button x-get="/api/data">` |
+| `x-post` | AJAX: Perform a POST request. | `<form x-post="/api/save">` |
+| `x-put` | AJAX: Perform a PUT request. | `<button x-put="/api/update">` |
+| `x-patch` | AJAX: Perform a PATCH request. | `<button x-patch="/api/edit">` |
+| `x-delete` | AJAX: Perform a DELETE request. | `<button x-delete="/api/del">` |
+| `x-link` | Opt-in to SPA navigation for an anchor tag. | `<a href="/about" x-link>` |
+
+## Routing
+
+BaseDOM includes a full-featured SPA router with nested layouts and guards.
 
 ```javascript
-const [count, setCount] = signal(0);
-const double = computed(() => count() * 2);
-effect(() => console.log('Count changed:', count()));
-```
+import { defineRoute, navigate } from './basedom/router.js';
 
-### Template Syntax
-
-- `{{ expr }}`: Text interpolation
-- `x-if`, `x-else`: Conditional
-- `x-for`: Loop
-- `x-on`/`@`: Events
-- `x-bind`/`:`: Attributes
-- `x-model`: Two-way binding
-- `x-show`: Visibility
-
-Examples:
-
-```html
-<div x-if="isVisible">Show me</div>
-<div x-else>Hidden</div>
-
-<ul>
-  <li x-for="item in items">{{ item.name }}</li>
-</ul>
-
-<button @click="increment">Click</button>
-<input x-model="searchText">
-<div x-show="loading">Loading...</div>
-```
-
-## API & Features
-
-### Lifecycle Hooks
-
-- `onMount(element)`: Setup
-- `onUnmount()`: Cleanup
-- `onUpdate()`: On re-render
-
-Use in script or with `x-mount`, etc.
-
-Example:
-
-```html
-<script>
-export default function() {
-  const onMount = (el) => console.log('Mounted');
-  return { onMount };
-}
-</script>
-```
-
-### Programmatic Components
-
-Use `html.js` factories like `div({ children: [...] })`
-
-Example:
-
-```javascript
-import { div, button } from './basedom/html.js';
-
-function Counter() {
-  const [count, setCount] = signal(0);
-  return div({
-    children: [
-      button({ onClick: () => setCount(count() + 1) }, 'Increment'),
-      'Count: ' + count()
-    ]
-  });
-}
-```
-
-### Routing
-
-- `defineRoute({ path, component, children })`
-- Guards: `guards: { beforeEnter: [fn] }`
-- Navigation: `navigate(path)`
-- Params: `$route.params`
-
-Example:
-
-```javascript
 defineRoute({
-  path: '/user/:id',
-  component: './User.html',
-  guards: {
-    beforeEnter: (to, from) => {
-      if (!loggedIn) return '/login';
+  path: '/dashboard',
+  component: './layouts/Dashboard.html',
+  meta: { title: 'Dashboard' },
+  children: [
+    { 
+      path: 'users/:id', 
+      component: './pages/UserDetail.html',
+      guards: {
+        beforeEnter: async (to) => {
+          if (!hasAccess(to.params.id)) return '/403';
+        }
+      }
     }
-  }
-});
-```
-
-
-- `createForm(config)`: State, validation
-- `Form`, `Field`, `Submit`: Components
-- Validators: `required`, `email`, etc.
-
-### Global State
-
-`createStore({ values, tables })`: Methods like `getValue`, `setValue`, transactions.
-
-Example:
-
-```javascript
-const store = createStore({
-  values: { user: null },
-  tables: { products: {} }
-});
-store.setValue('user', { name: 'John' });
-```
-
-### Declarative AJAX
-
-The fetch directives (`x-get`, `x-post`, `x-put`, `x-patch`, `x-delete`) build requests but delegate response handling to the framework's central utilities (`fetchAndSwap`, `parseComponent`, and `renderComponent`). This keeps request logic lightweight while reusing the parser, component rendering, and lifecycle systems.
-
-Key directive attributes:
-- `x-get`, `x-post`, `x-put`, `x-patch`, `x-delete`: request URL (method implied by attribute)
-- `x-target`: a CSS selector or the literal `this` to render into the triggering element
-- `x-swap`: swap style (innerHTML, outerHTML, textContent, delete, none, insert positions, etc.)
-- `x-select`: narrow the returned fragment to a selector before swapping
-- `x-select-oob`: swap out-of-band ids from the response
-- `x-params`, `x-include`, `x-vals`, `x-encoding`: request body/params controls and encoding (JSON/FormData)
-- `x-headers`: custom headers (JSON or semicolon/key:value format)
-- `x-indicator`: selector(s) for an indicator element — the class `x-requesting` is toggled while the request is running
-- `x-timeout`: abort the request after N milliseconds
-- `x-confirm`: confirmation expression or message
-- `x-push-url`, `x-replace-url`: update browser history after a successful response
-
-Behavior notes:
-- The directive handles building the request (method, headers, body, timeout, confirmation) and then calls `fetchAndSwap` which performs the network request and swaps content.
-- `fetchAndSwap` will try to parse the response as a BaseDOM component via `parseComponent`; if parsing succeeds the returned component function is rendered into the target using the same component lifecycle and `renderComponent` APIs (so `onMount`/`onUnmount` and scoped styles work as expected).
-- If parsing fails, `fetchAndSwap` falls back to a raw HTML swap via the existing `applyRawHtmlSwapToTarget` logic.
-- Use `x-target="this"` when you want the returned component to render into the element that triggered the fetch.
-- Use `x-select` / `x-select-oob` to restrict which part of the response is used for the swap; out-of-band (OOB) elements annotated with `x-swap-oob` are handled globally.
-
-Example:
-
-```html
-<button x-get="/api/data" x-target="#result" x-swap="innerHTML" x-indicator="#spinner">Load Data</button>
-<div id="spinner" class="indicator"></div>
-<div id="result"></div>
-```
-
-More details and best practices
-------------------------------
-
-- Server responses:
-  - The response body may be plain HTML, a fragment, or a BaseDOM single-file component (.html containing `<template>`, optional `<script>` and `<style>`). `fetchAndSwap` attempts to parse the response with `parseComponent` first; if parsing succeeds the returned component function is rendered via `renderComponent` (preserving lifecycle hooks and scoped styles). If parsing fails, the response is treated as raw HTML and swapped using `applyRawHtmlSwapToTarget`.
-
-- Writing server-returned components:
-  - Return a full BaseDOM component when you want the server to provide a self-contained UI fragment. Example:
-
-```html
-<template>
-  <div class="message">Hello from server: {{ data }}</div>
-</template>
-<script>
-export default function(props) {
-  return { data: props.data || 'n/a' };
-}
-</script>
-```
-
-- Request/body formats:
-  - `x-encoding="json"` forces JSON encoding for non-GET requests. When encoding is `json`, `x-params` may be a JSON string or the server-supplied string will be parsed when possible.
-  - `x-params` may be a URL-encoded string (`a=1&b=2`) or an expression/object. For GET requests `x-params` is appended to the query string.
-  - `x-include` accepts a selector to include named inputs from the DOM (useful to pick up form fields outside the triggering element).
-  - `x-vals` is evaluated in the component context when present; you can pass reactive values such as `x-vals="{ foo: someSignal }"` and they will be serialized into the request body (or merged into JSON body when `x-encoding=json`).
-
-- Headers parsing:
-  - `x-headers` accepts a JSON string (e.g. `{"X-Token":"abc"}`), an object expression, or a semicolon/newline separated list like `X-Token: abc; Accept: application/json`.
-
-- Indicator and timeout:
-  - `x-indicator` takes a selector (or comma-separated selectors) and the directive toggles the `x-requesting` class on matching elements while the request is active.
-  - `x-timeout` aborts the request after the specified milliseconds using `AbortController`.
-
-- Swap strategies and modifiers:
-  - `x-swap` accepts styles like `innerHTML`, `outerHTML`, `textContent`, `delete`, and insert positions (`beforebegin`, `afterbegin`, `beforeend`, `afterend`).
-  - You may also supply modifiers such as `swap:200ms` and `settle:100ms` in the same string (e.g. `x-swap="innerHTML swap:200ms settle:100ms transition:true"`). These modifiers control swap/settle delays and view transitions.
-  - `preserve` behavior is supported when rendering BaseDOM components: the implementation uses `preserveAndSwap` and `renderComponent` so child components keep their lifecycle where appropriate.
-
-- Targeting and routing:
-  - `x-target="this"` renders the response into the element that triggered the fetch.
-  - `x-target` can be any selector to render into a different element on the page.
-  - `x-push-url` and `x-replace-url` handle history updates. Use `true` to push/replace with the request URL, or provide a string URL to push/replace with a different URL.
-
-- Selecting fragments and OOB swaps:
-  - `x-select` narrows the response to the first matching selector in the returned fragment before swapping.
-  - `x-select-oob` can be used to swap specific ids out-of-band (e.g. `x-select-oob="#nav,#footer:outerHTML"`). The server may emit elements with `x-swap-oob` which are handled globally by the client.
-
-- Confirmation and triggers:
-  - `x-confirm` may be an expression evaluated in the component context. If it returns a string it will be shown as a `window.confirm` message; returning `false` aborts the action.
-  - `x-trigger` customizes the event that initiates the fetch (default is `click`, or `submit` for forms on non-GET).
-
-- Lifecycle and component rendering:
-  - Because the fetch pipeline uses `parseComponent` + `renderComponent` when possible, server-provided components participate in the same lifecycle system as local components (`onMount`, `onUnmount`, `onUpdate`), and scoped `<style>` blocks are applied via `handleScopedStyles`.
-
-Debugging tips
---------------
-
-- If a fetched fragment isn't rendering as a component, check browser console logs: parse errors are caught and the fallback raw-swap path is used.
-- Inspect the network request to confirm headers/body shape; the directive builds `Content-Type` when `x-encoding=json` is used.
-- To test component parsing locally, return a small `.html` snippet from your server and verify `renderComponent` runs (you should see `onMount` hooks fire for any mounted nodes).
-
-Small example (server returns a BaseDOM component):
-
-```html
-<button x-get="/component/TestComponent.html" x-target="#outlet" x-swap="innerHTML">Load Component</button>
-<div id="outlet"></div>
-```
-
-Server response (TestComponent.html):
-
-```html
-<template>
-  <div>Hello from server component: {{ name }}</div>
-</template>
-<script>
-export default function(props) { return { name: props.name || 'guest' }; }
-</script>
-```
-
-### Navigation Guards
-
-- Global: `addGlobalBeforeEnterGuard(fn)`
-- Route-specific: In `defineRoute`
-
-Example:
-
-```javascript
-addGlobalBeforeEnterGuard((to, from) => {
-  if (!auth) return '/login';
-});
-```
-
-### Scroll Behavior
-
-Define in route: `scrollBehavior: (context) => options`
-
-Example:
-
-```javascript
-defineRoute({
-  path: '/page',
+  ],
   scrollBehavior: () => ({ top: 0, behavior: 'smooth' })
 });
+
+// Programmatic navigation
+navigate('/dashboard/users/123');
 ```
 
-### Link Interception
+## Declarative AJAX (Fetch)
 
-Automatic for links with `x-link` or same origin.
-
-Example:
+HTMX-inspired AJAX directly in your HTML.
 
 ```html
-<a href="/about">About</a> <!-- Intercepted -->
+<div x-inherit="x-headers x-indicator">
+    <button x-post="/api/save" 
+            x-params='{"id": 1}' 
+            x-encoding="json"
+            x-target="#status"
+            x-indicator=".spinner"
+            x-headers='{"Authorization": "Bearer token"}'>
+        Save Changes
+    </button>
+    <span class="spinner x-requesting:show">Saving...</span>
+    <div id="status"></div>
+</div>
 ```
+
+### AJAX Deep-Dive
+
+BaseDOM's fetch system allows you to build complex, interactive UIs with minimal JavaScript.
+
+#### Fetch Attributes
+
+| Attribute | Description |
+|-----------|-------------|
+| `x-get`, `x-post`, `x-put`, `x-patch`, `x-delete` | The URL to fetch from using the specified method. |
+| `x-target` | The element to swap the response into (e.g., `#id`, `.class`, or `this`). |
+| `x-trigger` | The event that triggers the fetch (default: `click` or `submit`). |
+| `x-indicator` | Selector for elements that get the `x-requesting` class during fetch. |
+| `x-swap` | The swap strategy and modifiers (e.g., `innerHTML swap:1s`). |
+| `x-headers` | JSON or `Key: Value` pairs to send as request headers. |
+| `x-params` | Data to send with the request (JSON or URL-encoded). |
+| `x-include` | Additional elements to include in the request body. |
+| `x-vals` | Extra values to add to the request (evaluated expression). |
+| `x-encoding` | Set to `json` to send data as a JSON body. |
+| `x-confirm` | A confirmation message to show before fetching. |
+| `x-timeout` | Request timeout in milliseconds. |
+| `x-push-url` | Update the browser's address bar with the response URL. |
+| `x-replace-url` | Replace the browser's address bar with the response URL. |
+| `x-select` | Narrow the response to a specific selector before swapping. |
+| `x-select-oob` | Swap specific elements from the response out-of-band. |
+| `x-swap-oob` | Mark an element in a response for out-of-band swapping. |
+| `x-inherit` | List of attributes to inherit from parent elements (or `*`). |
+| `x-disinherit` | List of attributes to stop inheriting from parents (or `*`). |
+| `x-boost` | Boost anchor tags and forms to use AJAX automatically. |
+
+#### Swap Strategies
+
+The `x-swap` attribute controls how the response is inserted into the DOM.
+
+- `innerHTML` (Default): Replace the contents of the target.
+- `outerHTML`: Replace the target element itself.
+- `textContent`: Replace contents with raw text.
+- `beforebegin`: Insert before the target element.
+- `afterbegin`: Insert inside the target, before the first child.
+- `beforeend`: Insert inside the target, after the last child.
+- `afterend`: Insert after the target element.
+- `delete`: Remove the target element regardless of the response.
+- `none`: Do not perform a swap.
+
+#### Swap Modifiers
+
+Append these to `x-swap` for fine-grained control:
+
+- `swap:[time]`: Delay the swap (e.g., `swap:500ms`).
+- `settle:[time]`: Delay after the swap before finishing (e.g., `settle:100ms`).
+- `transition:true`: Use the **View Transitions API** for the swap.
+- `scroll:[top|bottom|selector:top]`: Scroll the window or an element after swapping.
+- `show:[top|bottom|selector:top]`: Scroll an element into view after swapping.
+- `focus-scroll:true`: Maintain scroll position of the focused element.
+
+#### Best Practices & Inheritance
+
+- **Use `x-inherit`**: Define common headers or indicators on a parent container.
+- **Indicators**: Use the `x-requesting` class (automatically added to `x-indicator` targets) to show loading spinners.
+- **OOB Swaps**: Use `x-swap-oob="true"` on elements in your server response to update multiple parts of the page in a single request.
+
+## Global Store
+
+A robust central state management system for tabular or keyed data.
+
+```javascript
+import { createStore } from './basedom/store.js';
+
+const store = createStore({
+  values: { theme: 'light' },
+  tables: { tasks: {} }
+});
+
+// Transactions batch multiple updates for efficiency
+store.transaction(() => {
+  store.setValue('theme', 'dark');
+  store.setRow('tasks', 't1', { title: 'Fix Bug', done: false });
+});
+
+// Fine-grained listeners
+store.addCellListener('tasks', 't1', 'done', (val) => {
+  console.log('Task t1 status:', val);
+});
+```
+
+### Advanced Store Features
+
+- **Schemas**: Enforce types and default values for keyed data and tables.
+- **Transactions**: Batch multiple updates to trigger listeners only once.
+- **JSON Serialization**: Easily sync store state with `localStorage` or server APIs.
+- **Computed Subsets**: Use `getSortedRowIds` to create reactive, sorted views of your data.
+
+## Form Handling
+
+Streamlined forms with built-in validation, state tracking, and UI helpers.
+
+```html
+<template>
+  <div x-mount="setupForm">
+    <div id="form-container"></div>
+  </div>
+</template>
+
+<script setup>
+import { Form, Field, Submit } from './basedom/form.js';
+import { required, email } from './basedom/validation.js';
+import { renderComponent } from './basedom/components.js';
+
+const setupForm = (el) => {
+  const myForm = Form({
+    initialValues: { username: '', email: '' },
+    validators: {
+      username: [required('Username is required')],
+      email: [required(), email('Invalid email address')]
+    },
+    onSubmit: async (values) => {
+      console.log('Form submitted:', values);
+    },
+    children: [
+      Field({ label: 'Username', name: 'username' }),
+      Field({ label: 'Email', name: 'email', type: 'email' }),
+      Submit('Register', { loadingText: 'Creating Account...' })
+    ]
+  });
+  renderComponent(myForm, el.querySelector('#form-container'));
+};
+</script>
+```
+
+## Lifecycle Hooks
+
+Hooks can be defined in scripts or directly on elements.
+
+```html
+<script setup>
+import { onMount, onUnmount } from '../basedom/lifecycle.js';
+
+onMount((el) => {
+    const timer = setInterval(() => console.log('Tick'), 1000);
+    onUnmount(() => clearInterval(timer));
+});
+</script>
+
+<!-- Directive usage -->
+<div x-mount="initChart" x-unmount="destroyChart"></div>
+```
+
+## API Reference
+
+For a full list of exported functions and detailed API documentation, see [Reference.md](./Reference.md).
 
 ## Contributing
 
-Open issues/PRs on GitHub for bugs, features, docs.
+BaseDOM is an open-source project. Feel free to open issues or submit pull requests.
 https://github.com/Named666/BaseDOM
 
-## TODO & Roadmap
+## License
 
-- Transitions
-- CLI Tool
-- Cookbook
+MIT

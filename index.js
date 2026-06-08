@@ -40,7 +40,9 @@ export * from './html.js';
 export * from './render.js';
 export * from './router.js';
 export * from './parser.js';
+export * from './registry.js';
 export * from './lifecycle.js';
+export * from './paths.js';
 
 // Development mode flag
 export const DEV_MODE = true;

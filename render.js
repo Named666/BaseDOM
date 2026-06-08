@@ -6,6 +6,7 @@ import { renderComponent, createComponent } from './components.js';
 import { signal } from './state.js';
 import { parseComponent } from './parser.js';
 import { devWarn } from './index.js';
+import { resolveComponentPath } from './paths.js';
 
 
 let errorBoundary = null;
@@ -26,6 +27,71 @@ export { setCurrentView };
 let prevRoutes = [];
 const componentCache = new Map();
 
+export function clearComponentCache(path) {
+  if (path) {
+    componentCache.delete(path);
+    devWarn(`Component cache cleared for: ${path}`);
+  } else {
+    componentCache.clear();
+    devWarn('Component cache cleared');
+  }
+}
+
+const hmrProxies = new Map();
+
+/**
+ * Gets or creates an HMR proxy for a component.
+ * @param {string} id - Unique ID for the component (usually the file path).
+ * @param {Function} initialFn - The initial component function.
+ * @returns {Function} A proxy function that can be updated.
+ */
+export function getHMRProxy(id, initialFn) {
+  if (hmrProxies.has(id)) {
+    const [getFn, setFn] = hmrProxies.get(id);
+    if (initialFn) setFn(() => initialFn);
+    return (props) => getFn()(props);
+  }
+  
+  const [getFn, setFn] = signal(() => initialFn);
+  const proxy = (props) => {
+    const fn = getFn();
+    return typeof fn === 'function' ? fn(props) : null;
+  };
+  
+  proxy.__isHMRProxy = true;
+  proxy.__hmrId = id;
+  proxy.update = (newFn) => {
+    setFn(() => newFn);
+  };
+  
+  hmrProxies.set(id, [getFn, setFn, proxy]);
+  return proxy;
+}
+
+// HMR Support for Vite
+if (typeof window !== 'undefined') {
+  window.addEventListener('basedom:hmr', async (e) => {
+    const { file, component } = e.detail;
+    devWarn(`HMR update received for: ${file}`);
+    
+    // Normalize file path to match what might be in the cache
+    const relativePath = file.replace(/.*\/public\//, '/').replace(/.*\/src\//, '/src/');
+    
+    // Update proxy if it exists
+    if (hmrProxies.has(file)) {
+      const [, setFn] = hmrProxies.get(file);
+      setFn(() => component);
+    }
+    
+    clearComponentCache(relativePath);
+    
+    // Re-render the current route to reflect changes
+    if (typeof renderRoute === 'function') {
+      await renderRoute(location.pathname + location.search);
+    }
+  });
+}
+
 
 async function resolveComponent(component) {
   // Normalize to always return a function that accepts props
@@ -41,23 +107,24 @@ async function resolveComponent(component) {
 
   // If it's a string, treat .html paths specially; otherwise return a function that returns the string
   if (!component.endsWith('.html')) return () => component;
+  const componentPath = resolveComponentPath(component);
 
-  if (componentCache.has(component)) {
-    devWarn(`Component cache hit for: ${component}`);
-    return componentCache.get(component);
+  if (componentCache.has(componentPath)) {
+    devWarn(`Component cache hit for: ${componentPath}`);
+    return componentCache.get(componentPath);
   }
 
   try {
-    const response = await fetch(component);
-    if (!response.ok) throw new Error(`Failed to fetch component: ${component} (status: ${response.status})`);
+    const response = await fetch(componentPath);
+    if (!response.ok) throw new Error(`Failed to fetch component: ${componentPath} (status: ${response.status})`);
     const sfcText = await response.text();
     const fn = await parseComponent(sfcText);
     // parsed component is expected to be a function(props) => element
-    componentCache.set(component, fn);
-    devWarn(`Component loaded and cached: ${component}`);
+    componentCache.set(componentPath, fn);
+    devWarn(`Component loaded and cached: ${componentPath}`);
     return fn;
   } catch (error) {
-    devWarn(`Component load failed: ${component}`, error);
+    devWarn(`Component load failed: ${componentPath}`, error);
     return () => createErrorElement('Component Load Error', error.message);
   }
 }

@@ -315,7 +315,7 @@ async function fetchAndSwap(url, options = {}) {
     };
 
     // apply swap with support for swapDelay/settleDelay/transition and lifecycle-aware rendering
-    const doSwap = () => {
+    let doSwap = () => {
       const style = swapSpec.swapStyle ? swapSpec.swapStyle.toLowerCase() : swapLower;
       switch (style) {
         case 'outerhtml':

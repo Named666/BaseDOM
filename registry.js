@@ -1,4 +1,5 @@
 import { parseComponent } from './parser.js';
+import { resolveComponentPath } from './paths.js';
 
 const componentRegistry = new Map();
 
@@ -13,7 +14,10 @@ export async function registerComponent(name, source) {
     
     if (typeof source === 'string') {
         // It's a file path, parse it
-        componentFn = await parseComponent(await fetch(source).then(r => r.text()));
+        const componentPath = resolveComponentPath(source);
+        const response = await fetch(componentPath);
+        if (!response.ok) throw new Error(`Failed to fetch component: ${componentPath} (status: ${response.status})`);
+        componentFn = await parseComponent(await response.text());
     } else {
         // It's already a function
         componentFn = source;
