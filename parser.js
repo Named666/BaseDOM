@@ -47,11 +47,31 @@ export async function parseComponent(htmlText) {
     let finalScript = script;
     const setupMatch = htmlText.match(/<script\s+setup[^>]*>([\s\S]*?)<\/script>/i);
     if (setupMatch) {
-      let setupCode = setupMatch[1];
-      setupCode = setupCode.split('\n').map(line => line.trim() === '' ? '' : '  ' + line).join('\n');
-      const identifiers = extractIdentifiers(setupMatch[1]);
-      finalScript = `export default function(props, ctx) {${setupCode}\n  return {\n\t${identifiers.join(',\n\t')} };\n}`;
+      let setupCode = setupMatch[1].trim();
+      
+      // Separate imports from the rest of the code
+      const lines = setupCode.split('\n');
+      const imports = lines.filter(line => line.trim().startsWith('import'));
+      const logic = lines.filter(line => !line.trim().startsWith('import'));
+      
+      const setupCodeFormatted = logic.map(line => line.trim() === '' ? '' : '  ' + line).join('\n');
+      
+      // Rewrite relative import paths to be relative to the component's location
+      const rewrittenImports = imports.map(line => {
+        return line.replace(/(from\s+['\"])(.*)(['\"])/g, (match, p1, p2, p3) => {
+            if (p2.startsWith('.')) {
+                // Ensure it remains relative to the component
+                return `${p1}${p2}${p3}`;
+            }
+            return match;
+        });
+      });
+
+      const identifiers = extractIdentifiers(logic.join('\n'));
+      
+      finalScript = `${rewrittenImports.join('\n')}\nexport default function(props, ctx) {\n${setupCodeFormatted}\n  return {\n\t${identifiers.join(',\n\t')} };\n}`;
     }
+    console.log('[BaseDOM] finalScript:', finalScript);
     const componentModule = await import(`data:text/javascript,${encodeURIComponent(finalScript)}`);
     const componentLogicFn = componentModule.default;
     if (typeof componentLogicFn !== 'function') {
@@ -281,7 +301,11 @@ export function parseNode(node, context, componentStyles = null) {
     }
     const props = directiveResult || { attrs: {} };
     if (componentStyles) props.styles = componentStyles;
-    const children = Array.from(node.childNodes).map(child => parseNode(child, context)).filter(Boolean);
+    
+    let childNodes = Array.from(node.childNodes);
+    childNodes = preprocessNodes(childNodes);
+    const children = childNodes.map(child => parseNode(child, context)).filter(Boolean);
+    
     return Element(node.tagName.toLowerCase())({ ...props, children });
 }
 
@@ -308,6 +332,8 @@ function extractIdentifiers(code) {
         let name = v;
         if (v.includes(':')) name = v.split(':')[1].trim();
         if (name.includes('=')) name = name.split('=')[0].trim();
+        // Remove braces if they were included
+        name = name.replace(/[{}]/g, '').trim();
         if (name) identifiers.push(name);
       });
     } else {
