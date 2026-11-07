@@ -4,6 +4,35 @@ import { createComponent } from './components.js';
 import { input, button, label, div, select, option, fieldset, textarea } from './html.js';
 
 
+/**
+ * A field is callable: `field()` reads, `field(next)` writes.
+ * `signal()` returns a tuple, which cannot be called. This wrapper is the form API.
+ * @param {*} initial
+ */
+function createField(initial) {
+    const [get, set] = signal(initial);
+    const field = (...args) => {
+        if (args.length === 0) return get();
+        set(args[0]);
+        return args[0];
+    };
+    field.set = set;
+    field.get = get;
+    field.__isSignal = true;
+    field._isSignal = true;
+    return field;
+}
+
+function runValidator(validator, value) {
+    const list = Array.isArray(validator) ? validator : [validator];
+    for (const fn of list) {
+        if (typeof fn !== 'function') continue;
+        const error = fn(value);
+        if (error) return error;
+    }
+    return null;
+}
+
 export function createForm(initialValues = {}) {
     const fields = {};
     const validators = {};
@@ -17,27 +46,28 @@ export function createForm(initialValues = {}) {
 
     // Initialize fields
     for (const [name, value] of Object.entries(initialValues)) {
-        fields[name] = signal(value);
+        fields[name] = createField(value);
     }
 
     // Extract validation logic for reuse
     function validateFields() {
         const newErrors = {};
         let formIsValid = true;
-        for (const [name, validator] of Object.entries(validators)) {
-            if (validator && fields[name]) {
-                const error = validator(fields[name]());
-                if (error) {
-                    newErrors[name] = error;
-                    formIsValid = false;
-                }
+        for (const name of Object.keys(fields)) {
+            const value = fields[name]();
+            const validator = validators[name];
+            if (!validator) continue;
+            const error = runValidator(validator, value);
+            if (error) {
+                newErrors[name] = error;
+                formIsValid = false;
             }
         }
         setErrors(newErrors);
         setIsValid(formIsValid);
     }
     // Run validation whenever any field changes
-    effect(validateFields);
+    const stopValidation = effect(validateFields);
     // Initial validation
     validateFields();
 
@@ -89,11 +119,14 @@ export function createForm(initialValues = {}) {
          },
         reset() {
             for (const [name, initialValue] of Object.entries(initialValues)) {
-                fields[name](initialValue);
+                if (typeof fields[name] === 'function') fields[name](initialValue);
             }
-            setErrors({});
             setTouched({});
             setSubmitError(null);
+            validateFields();
+        },
+        dispose() {
+            stopValidation();
         }
     };
 }

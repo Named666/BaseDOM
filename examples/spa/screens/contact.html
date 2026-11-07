@@ -1,0 +1,32 @@
+<template>
+  <section>
+    <h1>Contact</h1>
+    <form @submit="submit">
+      <label for="contact-name">Name</label>
+      <input id="contact-name" name="name" x-model="name" autocomplete="name">
+
+      <fieldset>
+        <legend>Plan</legend>
+        <label><input type="radio" name="plan" value="free" x-model="plan"> Free</label>
+        <label><input type="radio" name="plan" value="pro" x-model="plan"> Pro</label>
+      </fieldset>
+
+      <label for="contact-topic">Topic</label>
+      <select id="contact-topic" name="topic" x-model="topic">
+        <option value="hello">Hello</option>
+        <option value="bug">Bug</option>
+      </select>
+
+      <label for="contact-seats">Seats</label>
+      <input id="contact-seats" name="seats" type="number" min="1" x-model="seats">
+
+      <label><input id="contact-agree" type="checkbox" x-model="agree"> I agree to be contacted</label>
+
+      <p class="error" role="alert" x-if="error">{{ error }}</p>
+      <button type="submit">Send</button>
+      <p class="result" x-if="sent">Sent {{ name }} on the {{ plan }} plan.</p>
+    </form>
+  </section>
+</template>
+
+<script setup src="./contact.js"></script>

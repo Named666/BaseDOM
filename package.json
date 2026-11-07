@@ -1,13 +1,15 @@
 {
   "name": "basedom",
   "author": "named666",
-  "version": "0.3.01",
-  "description": "BaseDOM is a lightweight and reactive JavaScript library for building modern user interfaces with fine-grained reactivity.",
-  "main": "index.js",
+  "version": "0.4.0",
+  "description": "Small reactive UI library. Real DOM updates, no virtual DOM, no runtime dependencies.",
+  "main": "./index.js",
   "type": "module",
   "files": [
     "components.js",
     "directives.js",
+    "directives-core.js",
+    "fetch-directives.js",
     "expression.js",
     "fetch.js",
     "form.js",
@@ -22,10 +24,42 @@
     "state.js",
     "store.js",
     "validation.js",
-    "paths.js"
+    "paths.js",
+    "dev.js",
+    "sfc.js",
+    "sfc-compile.js",
+    "vite/plugin.js",
+    "index.d.ts",
+    "docs",
+    "examples",
+    "README.md",
+    "CHANGELOG.md"
   ],
+  "types": "./index.d.ts",
   "exports": {
-    ".": "./index.js"
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./sfc.js": "./sfc.js",
+    "./state.js": "./state.js",
+    "./components.js": "./components.js",
+    "./router.js": "./router.js",
+    "./form.js": "./form.js",
+    "./vite": "./vite/plugin.js"
+  },
+  "scripts": {
+    "test": "node --import ./test/register-dom.js --test test/*.test.js",
+    "test:types": "tsc -p tsconfig.json",
+    "test:graph": "node scripts/check-core-graph.mjs",
+    "test:browser": "node test/browser-spa.mjs",
+    "example": "node scripts/serve-example.js",
+    "example:build": "vite build --config examples/vite-counter/vite.config.js"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.1"
   },
   "keywords": [
     "javascript",

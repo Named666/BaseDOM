@@ -1,0 +1,25 @@
+<template>
+  <section class="counter">
+    <h1>{{ title }}</h1>
+    <p>Count: {{ count }}</p>
+    <button type="button" @click="increment">Increment</button>
+    <input x-model="message">
+    <p>{{ message }}</p>
+  </section>
+</template>
+
+<script setup>
+import { signal } from 'basedom/state.js';
+
+const title = 'BaseDOM counter';
+const [count, setCount] = signal(0);
+const [message, setMessage] = signal('Compiled from an HTML file');
+
+function increment() {
+  setCount((value) => value + 1);
+}
+</script>
+
+<style>
+.counter { font-family: sans-serif; padding: 1rem; }
+</style>

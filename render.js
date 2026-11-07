@@ -2,10 +2,10 @@
 // render.js
 
 import { findMatchingRoute, parseQuery, routes } from './router.js';
-import { renderComponent, createComponent } from './components.js';
+import { renderComponent, createComponent, mount } from './components.js';
 import { signal } from './state.js';
 import { parseComponent } from './parser.js';
-import { devWarn } from './index.js';
+import { devWarn } from './dev.js';
 import { resolveComponentPath } from './paths.js';
 
 
@@ -25,6 +25,10 @@ export let rootElementSelector = '#app';
 const [currentView, setCurrentView] = signal(null);
 export { setCurrentView };
 let prevRoutes = [];
+
+export function resetRenderState() {
+  prevRoutes = [];
+}
 const componentCache = new Map();
 
 export function clearComponentCache(path) {
@@ -118,7 +122,8 @@ async function resolveComponent(component) {
     const response = await fetch(componentPath);
     if (!response.ok) throw new Error(`Failed to fetch component: ${componentPath} (status: ${response.status})`);
     const sfcText = await response.text();
-    const fn = await parseComponent(sfcText);
+    const baseUrl = new URL(componentPath, window.location.href).href;
+    const fn = await parseComponent(sfcText, { baseUrl });
     // parsed component is expected to be a function(props) => element
     componentCache.set(componentPath, fn);
     devWarn(`Component loaded and cached: ${componentPath}`);
@@ -233,7 +238,7 @@ export async function renderRoute(pathname) {
             children: undefined,
             outlet: outletName
           };
-          renderComponent(() => componentFn(props), outlet);
+          mount(() => componentFn(props), outlet);
           prevRoutes = newRoutes;
           return;
         } else {

@@ -1,7 +1,7 @@
 // router.js
 // Core router for SPA navigation and route matching
 import { renderRoute } from './render.js';
-import { attachLinkInterception, navigate } from './navigation.js';
+import { attachLinkInterception, navigate, readBrowserRoute, setHistoryMode } from './navigation.js';
 
 export const routes = [];
 
@@ -148,9 +148,18 @@ export function findMatchingRoute(path) {
 /**
  * Initializes router: popstate and link interception.
  */
-export function startRouter() {
+let routerStarted = false;
+
+export function resetRoutes() {
+  routes.length = 0;
+}
+
+export function startRouter(options = {}) {
+  setHistoryMode(options.mode || 'history');
+  if (routerStarted || typeof window === 'undefined') return;
+  routerStarted = true;
   window.addEventListener('popstate', () => {
-    navigate(location.pathname + location.search, { triggeredByPopstate: true });
+    navigate(readBrowserRoute(), { triggeredByPopstate: true });
   });
   attachLinkInterception();
 }

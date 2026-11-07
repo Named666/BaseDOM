@@ -1,0 +1,27 @@
+<template>
+  <section class="counter">
+    <h1>{{ title }}</h1>
+    <p class="count">Count: {{ count }}</p>
+    <p>Double: {{ doubled }}</p>
+    <button type="button" @click="increment">Increment</button>
+    <button type="button" @click="reset">Reset</button>
+    <label>
+      Message
+      <input x-model="message">
+    </label>
+    <p class="message">{{ message }}</p>
+    <p x-if="count > 0">Count is positive.</p>
+    <p x-else>Count is zero.</p>
+    <ul>
+      <li x-for="item in items" x-key="item">{{ item }}</li>
+    </ul>
+  </section>
+</template>
+
+<script setup src="./counter.setup.js"></script>
+
+<style>
+.counter { font-family: sans-serif; max-width: 28rem; padding: 1rem; }
+button { margin-right: 0.5rem; }
+.message { font-weight: 600; }
+</style>

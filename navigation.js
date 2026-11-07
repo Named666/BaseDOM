@@ -17,7 +17,7 @@ export function saveScroll(path, x, y) {
 }
 export function restoreScroll(path) {
   const pos = scrollPositions()[path] || { x: 0, y: 0 };
-  window.scrollTo(pos.x, pos.y);
+  try { window.scrollTo(pos.x, pos.y); } catch { /* optional in non-browser hosts */ }
 }
 
 // --- Global Navigation Guards ---
@@ -92,7 +92,7 @@ async function handleScrollBehavior(targetRouteMatch, currentRouteMatch, path) {
           query: parseQuery(path.split('?')[1] || '')
         });
         if (scrollOptions && typeof window.scrollTo === 'function') {
-          window.scrollTo(scrollOptions);
+          try { window.scrollTo(scrollOptions); } catch { /* optional */ }
           scrolled = true;
           break;
         }
@@ -104,14 +104,56 @@ async function handleScrollBehavior(targetRouteMatch, currentRouteMatch, path) {
   }
 }
 
+let historyMode = 'history';
+let navigationVersion = 0;
+let navigationQueue = Promise.resolve();
+
+export function setHistoryMode(mode) {
+  historyMode = mode === 'hash' ? 'hash' : 'history';
+}
+
+export function normalizeRoutePath(path) {
+  let value = String(path || '/');
+  if (value.startsWith('#')) value = value.slice(1) || '/';
+  const [pathname, search] = value.split('?');
+  const withSlash = pathname.startsWith('/') ? pathname : `/${pathname}`;
+  return search ? `${withSlash}?${search}` : withSlash;
+}
+
+export function readBrowserRoute() {
+  if (historyMode === 'hash') return normalizeRoutePath(location.hash.replace(/^#/, '') || '/');
+  return location.pathname + location.search;
+}
+
+function writeBrowserRoute(path, replace) {
+  if (historyMode === 'hash') {
+    const hash = `#${normalizeRoutePath(path)}`;
+    if (replace) history.replaceState({}, '', hash);
+    else history.pushState({}, '', hash);
+    return;
+  }
+  if (replace) history.replaceState({}, '', path);
+  else history.pushState({}, '', path);
+}
+
 // --- Navigation ---
-export async function navigate(path, { replace = false, triggeredByPopstate = false } = {}) {
-  if (pendingNavigation()) throw new Error('Navigation already in progress');
+export function navigate(path, options = {}) {
+  const version = ++navigationVersion;
+  const job = navigationQueue.then(() => navigateNow(path, options, version));
+  navigationQueue = job.then(() => {}, () => {});
+  return job;
+}
+
+async function navigateNow(path, { replace = false, triggeredByPopstate = false } = {}, version) {
+  path = normalizeRoutePath(path);
+  const stale = () => version !== navigationVersion;
+  if (stale()) return;
   // Determine the previous (current) path. Prefer the `currentRoute` signal if available
   // because when `popstate` fires `location` is already the new URL.
-  const prevPath = currentRoute() || (location.pathname + location.search);
-  if (path === prevPath && !replace && !triggeredByPopstate) return;
+  const recordedPath = currentRoute();
+  if (recordedPath && path === recordedPath && !replace && !triggeredByPopstate) return;
   // Only save scroll for navigations initiated by the app (not browser back/forward)
+  const prevPath = recordedPath || (location.pathname + location.search);
   if (!triggeredByPopstate) saveScroll(prevPath, window.scrollX, window.scrollY);
   try {
     const currentRouteMatch = findMatchingRoute((prevPath || '').split('?')[0]);
@@ -124,30 +166,29 @@ export async function navigate(path, { replace = false, triggeredByPopstate = fa
       query: parseQuery(path.split('?')[1] || '')
     };
     
-    // Run guards
+    // Run guards. A newer navigate() supersedes this one.
     if (!(await runLeaveGuards(currentRouteMatch, context))) return;
+    if (stale()) return;
     if (!(await runEnterGuards(targetRouteMatch, context))) return;
+    if (stale()) return;
 
-    // All guards passed - mark navigation as pending and proceed to render
     setPendingNavigation(path);
 
-    // Render route and update signals
     await renderRoute(path);
-    // Only modify browser history for navigations initiated by the app
-    if (!triggeredByPopstate) {
-      if (replace) history.replaceState({}, '', path);
-      else history.pushState({}, '', path);
-    }
+    if (stale()) return;
+    if (!triggeredByPopstate) writeBrowserRoute(path, replace);
     // Update the `currentRoute` signal so future popstate handlers know the origin
     setCurrentRoute(path);
+    focusRouteHeading();
 
     // Handle scroll behavior
     await handleScrollBehavior(targetRouteMatch, currentRouteMatch, path);
   } catch (err) {
+    if (stale()) return;
     setErrorState(err);
     renderErrorView(err);
   } finally {
-    setPendingNavigation(null);
+    if (!stale()) setPendingNavigation(null);
   }
 }
 
@@ -167,15 +208,43 @@ function renderErrorView(err) {
   renderComponent(el, rootEl);
 }
 
+function focusRouteHeading() {
+  const scope = document.querySelector('[x-outlet]') || document.querySelector(rootElementSelector) || document.body;
+  if (!scope) return;
+  const heading = scope.querySelector('h1, h2, [data-route-focus], [autofocus]');
+  if (!heading || typeof heading.focus !== 'function') return;
+  if (heading.tabIndex < 0) heading.tabIndex = -1;
+  try { heading.focus(); } catch { /* jsdom and non-focusable nodes */ }
+}
+
+let linkInterceptionAttached = false;
+
+/**
+ * SPA interception is opt-in. Only anchors with `x-link` are handled.
+ * Ordinary links keep the browser's default navigation.
+ * @param {Element} link
+ * @param {MouseEvent} event
+ */
+export function shouldInterceptLink(link, event) {
+  if (!link || !event) return false;
+  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
+  if (!link.hasAttribute('x-link')) return false;
+  if (link.target && link.target !== '_self') return false;
+  if (link.hasAttribute('download')) return false;
+  if (typeof location !== 'undefined' && link.origin !== location.origin) return false;
+  return true;
+}
+
 // --- Link Interception ---
 export function attachLinkInterception() {
-  document.body.addEventListener('click', e => {
-    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-    const link = e.target.closest('a[x-link], a[href]');
-    if (link && link.origin === location.origin) {
-      e.preventDefault();
-      const href = link.getAttribute('href');
-      if (href !== location.pathname + location.search) navigate(href);
-    }
+  if (linkInterceptionAttached) return;
+  if (typeof document === 'undefined' || !document.body) return;
+  linkInterceptionAttached = true;
+  document.body.addEventListener('click', (event) => {
+    const link = event.target && event.target.closest ? event.target.closest('a[x-link]') : null;
+    if (!shouldInterceptLink(link, event)) return;
+    event.preventDefault();
+    const href = link.getAttribute('href');
+    if (href && normalizeRoutePath(href) !== readBrowserRoute()) navigate(href);
   });
 }
