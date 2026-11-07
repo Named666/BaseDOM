@@ -1,0 +1,20 @@
+<template>
+  <div class="shell">
+    <header>
+      <strong>BaseDOM</strong>
+      <nav>
+        <a href="#/" x-link>Home</a>
+        <a href="#/about" x-link>About</a>
+      </nav>
+    </header>
+    <main x-outlet></main>
+  </div>
+</template>
+
+<script setup src="./layout.js"></script>
+
+<style>
+header { display: flex; gap: 1rem; align-items: center; padding: 1rem 0; font-family: sans-serif; }
+nav { display: flex; gap: 0.75rem; }
+main { font-family: sans-serif; padding-bottom: 2rem; }
+</style>

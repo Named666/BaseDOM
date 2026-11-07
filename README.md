@@ -37,17 +37,33 @@ npm test
 npm run example
 ```
 
-Open `http://127.0.0.1:4173/examples/no-build/`. The component is `examples/no-build/components/Counter.html`. Its script is a normal module, `counter.setup.js`, referenced by `<script setup src>`. `app.js` loads it and mounts it once:
+Open `http://127.0.0.1:4173/examples/spa/` for the two-screen app. Each screen is an `.html` file. Its script is a module beside the file (`<script setup src>`), so the browser loads it and the HTML is not evaluated. `examples/no-build/` is a single screen with no router.
 
 ```js
 import { loadComponent } from '../../sfc.js';
-import { mount } from '../../components.js';
+import { defineRoute, startRouter } from '../../router.js';
+import { initialize } from '../../render.js';
+import { navigate } from '../../navigation.js';
 
-const Counter = await loadComponent(new URL('./components/Counter.html', import.meta.url).href);
-mount(Counter, '#app');
+const layout = await loadComponent(new URL('./screens/layout.html', import.meta.url).href);
+const home = await loadComponent(new URL('./screens/home.html', import.meta.url).href);
+const about = await loadComponent(new URL('./screens/about.html', import.meta.url).href);
+
+defineRoute({
+  path: '/',
+  component: layout,
+  children: [
+    { path: '', component: home },
+    { path: 'about', component: about }
+  ]
+});
+
+initialize('#app');
+startRouter();
+await navigate(location.pathname + location.search);
 ```
 
-`mount` does not re-run the component when a signal changes. The text node and the list update themselves.
+The layout stays mounted. `<main x-outlet>` is the only part that changes. A screen runs once; later signal writes update the existing DOM nodes. The example uses hash URLs (`#/about`) so a static server does not have to rewrite paths. `startRouter()` without `{ mode: 'hash' }` uses normal paths when the server falls back to `index.html`.
 
 To compile an inline `<script setup>` instead, use the Vite example:
 

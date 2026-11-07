@@ -2,6 +2,13 @@
 
 ## 0.4.0
 
+### SPA
+
+- Screen templates no longer import the router or fetch stack. A Vite 6 build of the counter is 30.81 kB minified / 10.41 kB gzip. An esbuild bundle of the two-screen app is 44.5 kB minified / 15.5 kB gzip.
+- `<main x-outlet>` keeps a layout mounted while the child screen is replaced and unmounted.
+- `startRouter({ mode: 'hash' })` works from any directory. The default remains path history.
+- The new screen's heading receives focus.
+
 First tested slice of the runtime. BaseDOM updates real DOM nodes. It does not add a virtual DOM.
 
 ### Breaking

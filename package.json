@@ -8,6 +8,8 @@
   "files": [
     "components.js",
     "directives.js",
+    "directives-core.js",
+    "fetch-directives.js",
     "expression.js",
     "fetch.js",
     "form.js",
@@ -37,6 +39,7 @@
     "./sfc.js": "./sfc.js",
     "./state.js": "./state.js",
     "./components.js": "./components.js",
+    "./router.js": "./router.js",
     "./vite": "./vite/plugin.js"
   },
   "scripts": {

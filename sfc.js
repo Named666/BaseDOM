@@ -17,7 +17,7 @@ import { runWithOwner, createOwner } from './state.js';
 import { bindComponentOwner, attachLifecycleHooks } from './lifecycle.js';
 import { createComponent, handleScopedStyles } from './components.js';
 import { devWarn } from './dev.js';
-import './directives.js';
+import './directives-core.js';
 
 export const INLINE_SCRIPT_ERROR =
   'BaseDOM refused to execute inline <script> from SFC text. ' +

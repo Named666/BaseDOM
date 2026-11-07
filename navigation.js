@@ -17,7 +17,7 @@ export function saveScroll(path, x, y) {
 }
 export function restoreScroll(path) {
   const pos = scrollPositions()[path] || { x: 0, y: 0 };
-  window.scrollTo(pos.x, pos.y);
+  try { window.scrollTo(pos.x, pos.y); } catch { /* optional in non-browser hosts */ }
 }
 
 // --- Global Navigation Guards ---
@@ -92,7 +92,7 @@ async function handleScrollBehavior(targetRouteMatch, currentRouteMatch, path) {
           query: parseQuery(path.split('?')[1] || '')
         });
         if (scrollOptions && typeof window.scrollTo === 'function') {
-          window.scrollTo(scrollOptions);
+          try { window.scrollTo(scrollOptions); } catch { /* optional */ }
           scrolled = true;
           break;
         }
@@ -104,14 +104,46 @@ async function handleScrollBehavior(targetRouteMatch, currentRouteMatch, path) {
   }
 }
 
+let historyMode = 'history';
+
+export function setHistoryMode(mode) {
+  historyMode = mode === 'hash' ? 'hash' : 'history';
+}
+
+export function normalizeRoutePath(path) {
+  let value = String(path || '/');
+  if (value.startsWith('#')) value = value.slice(1) || '/';
+  const [pathname, search] = value.split('?');
+  const withSlash = pathname.startsWith('/') ? pathname : `/${pathname}`;
+  return search ? `${withSlash}?${search}` : withSlash;
+}
+
+export function readBrowserRoute() {
+  if (historyMode === 'hash') return normalizeRoutePath(location.hash.replace(/^#/, '') || '/');
+  return location.pathname + location.search;
+}
+
+function writeBrowserRoute(path, replace) {
+  if (historyMode === 'hash') {
+    const hash = `#${normalizeRoutePath(path)}`;
+    if (replace) history.replaceState({}, '', hash);
+    else history.pushState({}, '', hash);
+    return;
+  }
+  if (replace) history.replaceState({}, '', path);
+  else history.pushState({}, '', path);
+}
+
 // --- Navigation ---
 export async function navigate(path, { replace = false, triggeredByPopstate = false } = {}) {
+  path = normalizeRoutePath(path);
   if (pendingNavigation()) throw new Error('Navigation already in progress');
   // Determine the previous (current) path. Prefer the `currentRoute` signal if available
   // because when `popstate` fires `location` is already the new URL.
-  const prevPath = currentRoute() || (location.pathname + location.search);
-  if (path === prevPath && !replace && !triggeredByPopstate) return;
+  const recordedPath = currentRoute();
+  if (recordedPath && path === recordedPath && !replace && !triggeredByPopstate) return;
   // Only save scroll for navigations initiated by the app (not browser back/forward)
+  const prevPath = recordedPath || (location.pathname + location.search);
   if (!triggeredByPopstate) saveScroll(prevPath, window.scrollX, window.scrollY);
   try {
     const currentRouteMatch = findMatchingRoute((prevPath || '').split('?')[0]);
@@ -134,12 +166,10 @@ export async function navigate(path, { replace = false, triggeredByPopstate = fa
     // Render route and update signals
     await renderRoute(path);
     // Only modify browser history for navigations initiated by the app
-    if (!triggeredByPopstate) {
-      if (replace) history.replaceState({}, '', path);
-      else history.pushState({}, '', path);
-    }
+    if (!triggeredByPopstate) writeBrowserRoute(path, replace);
     // Update the `currentRoute` signal so future popstate handlers know the origin
     setCurrentRoute(path);
+    focusRouteHeading();
 
     // Handle scroll behavior
     await handleScrollBehavior(targetRouteMatch, currentRouteMatch, path);
@@ -165,6 +195,15 @@ function renderErrorView(err) {
   });
   setCurrentView(el);
   renderComponent(el, rootEl);
+}
+
+function focusRouteHeading() {
+  const scope = document.querySelector('[x-outlet]') || document.querySelector(rootElementSelector) || document.body;
+  if (!scope) return;
+  const heading = scope.querySelector('h1, h2, [data-route-focus], [autofocus]');
+  if (!heading || typeof heading.focus !== 'function') return;
+  if (heading.tabIndex < 0) heading.tabIndex = -1;
+  try { heading.focus(); } catch { /* jsdom and non-focusable nodes */ }
 }
 
 let linkInterceptionAttached = false;
@@ -195,6 +234,6 @@ export function attachLinkInterception() {
     if (!shouldInterceptLink(link, event)) return;
     event.preventDefault();
     const href = link.getAttribute('href');
-    if (href && href !== location.pathname + location.search) navigate(href);
+    if (href && normalizeRoutePath(href) !== readBrowserRoute()) navigate(href);
   });
 }
