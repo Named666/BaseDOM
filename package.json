@@ -29,26 +29,36 @@
     "sfc.js",
     "sfc-compile.js",
     "vite/plugin.js",
+    "index.d.ts",
     "docs",
     "examples",
     "README.md",
     "CHANGELOG.md"
   ],
+  "types": "./index.d.ts",
   "exports": {
-    ".": "./index.js",
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
     "./sfc.js": "./sfc.js",
     "./state.js": "./state.js",
     "./components.js": "./components.js",
     "./router.js": "./router.js",
+    "./form.js": "./form.js",
     "./vite": "./vite/plugin.js"
   },
   "scripts": {
     "test": "node --import ./test/register-dom.js --test test/*.test.js",
+    "test:types": "tsc -p tsconfig.json",
+    "test:graph": "node scripts/check-core-graph.mjs",
+    "test:browser": "node test/browser-spa.mjs",
     "example": "node scripts/serve-example.js",
     "example:build": "vite build --config examples/vite-counter/vite.config.js"
   },
   "devDependencies": {
     "jsdom": "^26.1.0",
+    "typescript": "^5.9.3",
     "vite": "^6.4.1"
   },
   "keywords": [

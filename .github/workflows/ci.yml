@@ -15,4 +15,13 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npm test
+      - run: npm run test:types
+      - run: npm run test:graph
       - run: npm run example:build
+      - name: Browser integration when Chrome is installed
+        run: |
+          if command -v google-chrome || command -v google-chrome-stable || command -v chromium; then
+            npm run test:browser
+          else
+            echo "Chrome is not installed on this runner; browser integration was not executed."
+          fi

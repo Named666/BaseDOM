@@ -35,7 +35,26 @@ function hashString(str) {
   return 'x-' + Math.abs(hash).toString(36);
 }
 
-const injectedStyles = new Set();
+const injectedStyles = new Map();
+let styleNonce = '';
+
+/**
+ * Sets the CSP nonce copied onto scoped `<style>` tags.
+ * Call this before the first component renders. A strict `style-src` that
+ * allows neither `'unsafe-inline'` nor this nonce will block those tags.
+ * This does not make arbitrary HTML safe to inject.
+ * @param {string} nonce
+ */
+export function setStyleNonce(nonce) {
+  styleNonce = nonce ? String(nonce) : '';
+  for (const tag of injectedStyles.values()) applyStyleNonce(tag);
+}
+
+function applyStyleNonce(tag) {
+  if (!styleNonce) return;
+  tag.nonce = styleNonce;
+  tag.setAttribute('nonce', styleNonce);
+}
 
 /**
  * Applies an attribute to an element, handling reactive values and effects.
@@ -119,6 +138,7 @@ export function handleScopedStyles(styles, element) {
   const styleHash = hashString(styles);
   if (injectedStyles.has(styleHash)) {
     element.classList.add(styleHash);
+    applyStyleNonce(injectedStyles.get(styleHash));
     return;
   }
 
@@ -177,8 +197,9 @@ export function handleScopedStyles(styles, element) {
   const scopedCSS = prefixSelectors(styles, styleHash);
   const styleTag = document.createElement('style');
   styleTag.textContent = scopedCSS;
+  applyStyleNonce(styleTag);
   document.head.appendChild(styleTag);
-  injectedStyles.add(styleHash);
+  injectedStyles.set(styleHash, styleTag);
   element.classList.add(styleHash);
 }
 
@@ -341,6 +362,7 @@ export function createComponent(tag, options = {}) {
 
   // Children
   (Array.isArray(children) ? children : [children]).forEach(child => appendChildToElement(element, child, effectsToCleanup));
+  if (tag === 'select' && element.hasAttribute('value')) element.value = element.getAttribute('value');
 
   // Unified lifecycle hooks and effect cleanup
   setupLifecycleHooks(element, effectsToCleanup, { onMount, onUnmount, onUpdate });

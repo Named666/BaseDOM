@@ -24,7 +24,7 @@ const About = defineSfc({
   template: `<section><h1>About</h1><p>Second screen</p></section>`
 });
 
-describe('two-screen SPA', () => {
+describe('two-screen SPA', { concurrency: false }, () => {
   beforeEach(() => {
     resetRoutes();
     resetRenderState();
@@ -64,5 +64,32 @@ describe('two-screen SPA', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(document.querySelector('h1').textContent, 'Home');
     assert.equal(document.querySelector('header'), header);
+  });
+
+  it('shows a 404 inside the layout for an unknown path', async () => {
+    await navigate('/missing');
+    assert.equal(document.querySelector('header').textContent, 'App');
+    assert.match(document.querySelector('main').textContent, /404/);
+  });
+
+  it('lets a later navigation replace one that is still in a guard', async () => {
+    resetRoutes();
+    let release = () => {};
+    const Slow = defineSfc({ template: '<h1>Slow</h1>' });
+    defineRoute({
+      path: '/',
+      component: Layout,
+      children: [
+        { path: '', component: Home },
+        { path: 'slow', component: Slow, guards: { beforeEnter: () => new Promise((resolve) => { release = resolve; }) } },
+        { path: 'about', component: About }
+      ]
+    });
+    const first = navigate('/slow');
+    const second = navigate('/about');
+    release();
+    await first;
+    await second;
+    assert.equal(document.querySelector('h1').textContent, 'About');
   });
 });

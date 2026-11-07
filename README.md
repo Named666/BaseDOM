@@ -339,7 +339,7 @@ store.addCellListener('tasks', 't1', 'done', (val) => {
 
 ## Form Handling
 
-Streamlined forms with built-in validation, state tracking, and UI helpers.
+The supported form path is native controls in an HTML screen: `x-model` on text, checkbox, radio, select, and number inputs, with the screen's own submit function. See `examples/spa/screens/contact.html`. `createForm` stores field values and runs validators. The `Form`, `Field`, and `Submit` element builders are experimental: they are not covered as a stable API.
 
 ```html
 <template>

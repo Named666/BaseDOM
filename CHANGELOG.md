@@ -2,6 +2,16 @@
 
 ## 0.4.0
 
+### Hardening
+
+- `createForm` fields read with `field()` and write with `field(next)`. Validators can be a function or a list. `dispose()` stops the validation effect.
+- `x-model` covers text, checkbox, radio, select, and number inputs.
+- A newer `navigate()` supersedes one still waiting on a guard instead of throwing.
+- Unknown paths render a 404 in the layout. Modified clicks, `_blank`, and downloads are not intercepted.
+- Failed template expressions are reported with the expression text.
+- `setStyleNonce` copies a CSP nonce onto scoped style tags. Without a nonce or `'unsafe-inline'`, those tags are blocked.
+- Checked declarations live in `index.d.ts`.
+
 ### SPA
 
 - Screen templates no longer import the router or fetch stack. A Vite 6 build of the counter is 30.81 kB minified / 10.41 kB gzip. An esbuild bundle of the two-screen app is 44.5 kB minified / 15.5 kB gzip.

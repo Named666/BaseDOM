@@ -105,6 +105,8 @@ async function handleScrollBehavior(targetRouteMatch, currentRouteMatch, path) {
 }
 
 let historyMode = 'history';
+let navigationVersion = 0;
+let navigationQueue = Promise.resolve();
 
 export function setHistoryMode(mode) {
   historyMode = mode === 'hash' ? 'hash' : 'history';
@@ -135,9 +137,17 @@ function writeBrowserRoute(path, replace) {
 }
 
 // --- Navigation ---
-export async function navigate(path, { replace = false, triggeredByPopstate = false } = {}) {
+export function navigate(path, options = {}) {
+  const version = ++navigationVersion;
+  const job = navigationQueue.then(() => navigateNow(path, options, version));
+  navigationQueue = job.then(() => {}, () => {});
+  return job;
+}
+
+async function navigateNow(path, { replace = false, triggeredByPopstate = false } = {}, version) {
   path = normalizeRoutePath(path);
-  if (pendingNavigation()) throw new Error('Navigation already in progress');
+  const stale = () => version !== navigationVersion;
+  if (stale()) return;
   // Determine the previous (current) path. Prefer the `currentRoute` signal if available
   // because when `popstate` fires `location` is already the new URL.
   const recordedPath = currentRoute();
@@ -156,16 +166,16 @@ export async function navigate(path, { replace = false, triggeredByPopstate = fa
       query: parseQuery(path.split('?')[1] || '')
     };
     
-    // Run guards
+    // Run guards. A newer navigate() supersedes this one.
     if (!(await runLeaveGuards(currentRouteMatch, context))) return;
+    if (stale()) return;
     if (!(await runEnterGuards(targetRouteMatch, context))) return;
+    if (stale()) return;
 
-    // All guards passed - mark navigation as pending and proceed to render
     setPendingNavigation(path);
 
-    // Render route and update signals
     await renderRoute(path);
-    // Only modify browser history for navigations initiated by the app
+    if (stale()) return;
     if (!triggeredByPopstate) writeBrowserRoute(path, replace);
     // Update the `currentRoute` signal so future popstate handlers know the origin
     setCurrentRoute(path);
@@ -174,10 +184,11 @@ export async function navigate(path, { replace = false, triggeredByPopstate = fa
     // Handle scroll behavior
     await handleScrollBehavior(targetRouteMatch, currentRouteMatch, path);
   } catch (err) {
+    if (stale()) return;
     setErrorState(err);
     renderErrorView(err);
   } finally {
-    setPendingNavigation(null);
+    if (!stale()) setPendingNavigation(null);
   }
 }
 

@@ -81,14 +81,14 @@ export const withLifecycleHooks = (componentFn, lifecycle = {}) => {
 
 const tags = [
     'div', 'p', 'span', 'button', 'input', 'label', 'video', 'h1', 'h2', 'h3',
-    'ul', 'li', 'nav', 'header', 'footer', 'main', 'select', 'option', 'fieldset'
+    'ul', 'li', 'nav', 'header', 'footer', 'main', 'select', 'option', 'fieldset', 'textarea'
 ];
 
 const elements = {};
 tags.forEach(tag => {
     elements[tag] = Element(tag);
 });
-export const { div, p, span, button, input, label, video, h1, h2, h3, ul, li, nav, header, footer, main, select, option, fieldset } = elements;
+export const { div, p, span, button, input, label, video, h1, h2, h3, ul, li, nav, header, footer, main, select, option, fieldset, textarea } = elements;
 
 export const Link = (optionsOrChildren, childrenIfAttrs) => {
     // If the first argument is not an object, or is an array, it must be children.

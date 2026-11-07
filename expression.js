@@ -467,7 +467,7 @@ export function evaluateExpression(expression, context, options = {}) {
     return evaluateParsed(expression, context);
   } catch (error) {
     if (options.throw) throw error;
-    console.warn(`Expression evaluation failed: ${expression}`, error);
+    console.error(`[BaseDOM] expression failed: ${expression}`, error);
     return undefined;
   }
 }

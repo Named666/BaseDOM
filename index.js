@@ -56,4 +56,5 @@ export * from './registry.js';
 export * from './lifecycle.js';
 export * from './paths.js';
 export * from './sfc.js';
+export { createForm } from './form.js';
 export { DEV_MODE, devWarn } from './dev.js';

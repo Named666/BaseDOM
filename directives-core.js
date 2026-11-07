@@ -341,7 +341,7 @@ export const xModelDirective = {
         }
 
         if (!getter || typeof getter !== 'function' || !setter || typeof setter !== 'function') {
-            console.warn(`x-model: '${modelExpr}' is not a valid signal or setter is missing in context.`);
+            console.error(`[BaseDOM] x-model "${modelExpr}" needs a signal getter with .set, or a setter named set${modelExpr.charAt(0).toUpperCase()}${modelExpr.slice(1)}.`);
             return;
         }
 
@@ -350,22 +350,43 @@ export const xModelDirective = {
         const type = node.getAttribute('type');
 
         if (tagName === 'input' && type === 'checkbox') {
-            props.attrs.checked = computed(() => getter());
+            props.attrs.checked = computed(() => Boolean(getter()));
+            props.onChange = (event) => setter(event.target.checked);
+        } else if (tagName === 'input' && type === 'radio') {
+            const option = node.getAttribute('value') ?? '';
+            props.attrs.checked = computed(() => getter() === option);
             props.onChange = (event) => {
-                setter(event.target.checked);
+                if (event.target.checked) setter(option);
             };
+        } else if (tagName === 'input' && (type === 'number' || type === 'range')) {
+            props.attrs.value = computed(() => {
+                const current = getter();
+                return current == null || Number.isNaN(current) ? '' : String(current);
+            });
+            const writeNumber = (event) => {
+                const raw = event.target.value;
+                if (raw === '') setter(null);
+                else {
+                    const parsed = Number(raw);
+                    setter(Number.isNaN(parsed) ? null : parsed);
+                }
+            };
+            props.onInput = writeNumber;
+            props.onChange = writeNumber;
         } else if (tagName === 'input' || tagName === 'textarea') {
-            props.attrs.value = computed(() => getter());
-            const inputHandler = (event) => {
-                setter(event.target.value);
-            };
+            props.attrs.value = computed(() => {
+                const current = getter();
+                return current == null ? '' : String(current);
+            });
+            const inputHandler = (event) => setter(event.target.value);
             props.onInput = inputHandler;
             props.onChange = inputHandler;
         } else if (tagName === 'select') {
-            props.attrs.value = computed(() => getter());
-            props.onChange = (event) => {
-                setter(event.target.value);
-            };
+            props.attrs.value = computed(() => {
+                const current = getter();
+                return current == null ? '' : String(current);
+            });
+            props.onChange = (event) => setter(event.target.value);
         }
     }
 };
