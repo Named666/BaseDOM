@@ -1,17 +1,18 @@
 // directives.js
-import { computed } from './state.js';
+import { computed, effect, signal, untrack, unwrapSignal, createOwner, runWithOwner, disposeOwner } from './state.js';
 import { evaluateExpression, _reactive } from './expression.js';
 import { registerDirective, parseComponent } from './parser.js';
 import { navigate, attachLinkInterception } from './navigation.js';
-import { renderComponent } from './components.js';
+import { renderComponent, createComponent } from './components.js';
 import { fetchAndSwap } from './fetch.js';
+import { callOnMountRecursive, callOnUnmountRecursive } from './lifecycle.js';
 
 // --- Helper utilities (htmx-like semantics) ---
 // Ensure BaseDOM link interception is enabled so `x-link`/navigation works
 if (typeof attachLinkInterception === 'function') attachLinkInterception();
 function parentElt(elt) {
     const parent = elt.parentElement;
-    if (!parent && elt.parentNode instanceof ShadowRoot) return elt.parentNode;
+    if (!parent && typeof ShadowRoot !== 'undefined' && elt.parentNode instanceof ShadowRoot) return elt.parentNode;
     return parent;
 }
 
@@ -126,7 +127,7 @@ export const xIfDirective = {
                 }
                 return null;
             } catch (error) {
-                if (window.devWarn) devWarn(`[directives.js/xIfDirective] Error evaluating x-if expression '${ifDirective}':`, error);
+                warn(`[directives.js/xIfDirective] Error evaluating x-if expression '${ifDirective}':`, error);
                 return null;
             }
         });
@@ -162,70 +163,130 @@ export const xElseDirective = {
     }
 };
 
+function warn(message, extra) {
+    if (typeof window !== 'undefined' && typeof window.devWarn === 'function') window.devWarn(message, extra);
+    else console.warn(message, extra === undefined ? '' : extra);
+}
+
+function interpolateAttribute(text, context) {
+    return text.replace(/\{\{(.*?)\}\}/g, (_, expr) => {
+        const value = evaluateExpression(expr.trim(), context);
+        return value == null ? '' : String(value);
+    });
+}
+
+function realizeRow(rendered) {
+    if (rendered instanceof HTMLElement) return rendered;
+    return createComponent('span', { children: rendered == null ? [] : [rendered] });
+}
+
+/**
+ * x-for keeps real DOM nodes and moves them. Keys come from x-key, otherwise
+ * the index. This is not a virtual DOM: the nodes in the map are the live elements.
+ */
 export const xForDirective = {
     controlFlow: true,
     handle: (parsingContext) => {
         const { node, context, parseNode } = parsingContext;
-        
-        // Check if this directive applies to this node
-        if (!node.hasAttribute || !node.hasAttribute('x-for')) {
-            return null;
-        }
-        
-        const forDirective = node.getAttribute('x-for');
+        if (!node.hasAttribute || !node.hasAttribute('x-for')) return null;
 
-        // Parse the for expression - support "item in items" and "item, index in items"
+        const forDirective = node.getAttribute('x-for');
         const forMatch = forDirective.match(/^(\w+)(?:\s*,\s*(\w+))?\s+in\s+(.+)$/);
         if (!forMatch) {
             console.warn(`Invalid x-for expression: ${forDirective}`);
             return () => [];
         }
-        
+
         const [, itemName, indexName, listExpr] = forMatch;
+        const keyExpr = node.getAttribute('x-key');
         const nodeClone = node.cloneNode(true);
         nodeClone.removeAttribute('x-for');
-        
-        // Return a function that reactively returns the list of components
-        return computed(() => {
-            try {
-                const items = evaluateExpression(listExpr.trim(), context);
-                let itemsArray = _reactive(items);
-                
-                if (!Array.isArray(itemsArray)) {
-                    return [];
-                }
+        if (keyExpr != null) nodeClone.removeAttribute('x-key');
 
-                return itemsArray.map((item, index) => {
-                    // For each item, create a new context that includes the loop variables
-                    // The loop variable is exposed as a signal-like getter so that
-                    // _reactive() unwraps it during expression evaluation.
-                    const itemGetter = () => item;
-                    try {
-                        itemGetter.__isSignal = true;
-                        itemGetter._isSignal = true;
-                    } catch (e) {}
-                    const loopContext = {
-                        ...context,
-                        [itemName]: itemGetter,
-                    };
-                
-                // Add index if specified
-                if (indexName) {
-                    loopContext[indexName] = (() => { const g = () => index; g.__isSignal = true; g._isSignal = true; return g; })();
-                } else {
-                    // Default index name
-                    const idxGetter = () => index;
-                    try { idxGetter.__isSignal = true; idxGetter._isSignal = true; } catch (e) {}
-                    loopContext[`${itemName}Index`] = idxGetter;
-                }
-                
-                return parseNode(nodeClone.cloneNode(true), loopContext);
-            });
+        const start = document.createComment('x-for');
+        const end = document.createComment('/x-for');
+        const fragment = document.createDocumentFragment();
+        Object.defineProperty(fragment, '__live', { value: true });
+        fragment.append(start, end);
+        const rows = new Map();
+
+        const stop = effect(() => {
+            let items;
+            try {
+                items = unwrapSignal(evaluateExpression(listExpr.trim(), context));
             } catch (error) {
-                if (window.devWarn) devWarn(`[directives.js/xForDirective] Error evaluating x-for expression '${listExpr}':`, error);
-                return [];
+                warn(`[directives.js/xForDirective] Error evaluating x-for expression '${listExpr}':`, error);
+                items = [];
+            }
+            if (!Array.isArray(items)) items = [];
+
+            const seen = new Set();
+            const nextKeys = [];
+            items.forEach((item, index) => {
+                let key = index;
+                if (keyExpr) {
+                    const keyContext = { ...context, [itemName]: signal(item)[0] };
+                    if (indexName) keyContext[indexName] = signal(index)[0];
+                    const evaluated = evaluateExpression(keyExpr, keyContext);
+                    if (evaluated != null && evaluated !== '') key = evaluated;
+                }
+                if (seen.has(key)) {
+                    console.warn(`[BaseDOM] duplicate x-key "${String(key)}" in x-for`);
+                    key = `${String(key)}#${index}`;
+                }
+                seen.add(key);
+                nextKeys.push(key);
+
+                const existing = rows.get(key);
+                if (existing) {
+                    existing.setItem(item);
+                    existing.setIndex(index);
+                    return;
+                }
+                const row = untrack(() => createRow(item, index));
+                rows.set(key, row);
+            });
+
+            for (const [key, row] of [...rows]) {
+                if (seen.has(key)) continue;
+                if (row.el.parentNode) {
+                    callOnUnmountRecursive(row.el);
+                    row.el.remove();
+                }
+                row.dispose();
+                rows.delete(key);
+            }
+
+            const parent = end.parentNode;
+            if (!parent) return;
+            for (const key of nextKeys) {
+                const row = rows.get(key);
+                if (row && row.el !== end.previousSibling) parent.insertBefore(row.el, end);
+            }
+            if (end.isConnected) {
+                for (const key of nextKeys) {
+                    const row = rows.get(key);
+                    if (row && !row.el.__mounted) callOnMountRecursive(row.el);
+                }
             }
         });
+        end.__dispose = stop;
+
+        function createRow(item, index) {
+            const owner = createOwner();
+            const [getItem, setItem] = signal(item);
+            const [getIndex, setIndex] = signal(index);
+            const loopContext = { ...context, [itemName]: getItem };
+            if (indexName) loopContext[indexName] = getIndex;
+            else loopContext[`${itemName}Index`] = getIndex;
+            let el;
+            runWithOwner(owner, () => {
+                el = realizeRow(parseNode(nodeClone.cloneNode(true), loopContext));
+            });
+            return { el, setItem, setIndex, dispose: () => disposeOwner(owner) };
+        }
+
+        return fragment;
     }
 };
 
@@ -282,13 +343,12 @@ export const xBindDirective = {
         if (!node.attributes) return;
         
         for (const attr of node.attributes) {
-            if (attr.name.startsWith('x-bind:')) {
-                const propName = attr.name.substring(7);
-                const expr = attr.value;
-                props[propName] = computed(() => {
-                    return evaluateExpression(expr, context);
-                });
-            }
+            let propName = null;
+            if (attr.name.startsWith('x-bind:')) propName = attr.name.slice(7);
+            else if (attr.name.startsWith(':') && !attr.name.startsWith('::')) propName = attr.name.slice(1);
+            if (!propName) continue;
+            const expr = attr.value.trim().replace(/^\{\{|\}\}$/g, '').trim();
+            props[propName] = computed(() => evaluateExpression(expr, context));
         }
     }
 };
@@ -308,7 +368,7 @@ export const xShowDirective = {
                 const shouldShow = evaluateExpression(showExpr, context);
                 return shouldShow ? '' : 'none';
             } catch (error) {
-                if (window.devWarn) devWarn(`[directives.js/xShowDirective] Error evaluating x-show expression '${showExpr}':`, error);
+                warn(`[directives.js/xShowDirective] Error evaluating x-show expression '${showExpr}':`, error);
                 return 'none'; // Default to hidden on error
             }
         });
@@ -709,29 +769,27 @@ export const defaultDirective = {
     handle: (parsingContext, props) => {
         const { node } = parsingContext;
         for (const attr of node.attributes) {
+            const name = attr.name;
             if (
-                !attr.name.startsWith('x-on:') &&
-                !attr.name.startsWith('@') &&
-                !attr.name.startsWith('x-bind:') &&
-                attr.name !== 'x-show' &&
-                attr.name !== 'x-model' &&
-                attr.name !== 'x-get' &&
-                attr.name !== 'x-post' &&
-                attr.name !== 'x-swap' &&
-                attr.name !== 'x-select' &&
-                attr.name !== 'x-trigger' &&
-                attr.name !== 'x-push-url' &&
-                attr.name !== 'x-replace-url' &&
-                attr.name !== 'x-target' &&
-                attr.name !== 'x-if' &&
-                attr.name !== 'x-else' &&
-                attr.name !== 'x-for' &&
-                attr.name !== 'x-mount' &&
-                attr.name !== 'x-unmount' &&
-                attr.name !== 'x-update'
-            ) {
-                props.attrs[attr.name] = attr.value;
-            }
+                name.startsWith('x-on:') ||
+                name.startsWith('@') ||
+                name.startsWith('x-bind:') ||
+                name.startsWith(':') ||
+                name === 'x-show' ||
+                name === 'x-model' ||
+                name === 'x-key' ||
+                name === 'x-ref' ||
+                name === 'x-slot' ||
+                name === 'x-if' ||
+                name === 'x-else' ||
+                name === 'x-for' ||
+                name === 'x-mount' ||
+                name === 'x-unmount' ||
+                name === 'x-update'
+            ) continue;
+            props.attrs[name] = name !== 'x-link' && attr.value.includes('{{')
+                ? computed(() => interpolateAttribute(attr.value, context))
+                : attr.value;
         }
     }
 };

@@ -2,9 +2,8 @@
 import { Element } from './html.js';
 import { computed } from './state.js';
 import { _reactive, evaluateExpression } from './expression.js';
-import { attachLifecycleHooks, wrapReactiveElement } from './lifecycle.js';
 import { getComponent } from './registry.js';
-import { handleScopedStyles, normalizeAttrValue } from './components.js';
+import { normalizeAttrValue } from './components.js';
 
 /**
  * Parses text content for {{...}} interpolation.
@@ -23,7 +22,9 @@ function parseTextNode(text, context) {
     parts.push(() => {
       try {
         const v = _reactive(evaluateExpression(expr, context));
-        return (v instanceof HTMLElement || v instanceof DocumentFragment) ? '' : (v !== undefined ? v : `{{${expr}}}`);
+        if (v instanceof HTMLElement || v instanceof DocumentFragment) return '';
+        if (v == null) return '';
+        return v;
       } catch (error) {
         console.error(`Interpolation error: ${expr}`, error);
         return `{{${expr}}}`;
@@ -41,101 +42,27 @@ function parseTextNode(text, context) {
  * @returns {Function} A function that, when called, returns a BaseDOM component.
  */
 
-export async function parseComponent(htmlText) {
-  try {
-    const { template, script, styles } = extractParts(htmlText);
-    let finalScript = script;
-    const setupMatch = htmlText.match(/<script\s+setup[^>]*>([\s\S]*?)<\/script>/i);
-    if (setupMatch) {
-      let setupCode = setupMatch[1];
-      setupCode = setupCode.split('\n').map(line => line.trim() === '' ? '' : '  ' + line).join('\n');
-      const identifiers = extractIdentifiers(setupMatch[1]);
-      finalScript = `export default function(props, ctx) {${setupCode}\n  return {\n\t${identifiers.join(',\n\t')} };\n}`;
-    }
-    const componentModule = await import(`data:text/javascript,${encodeURIComponent(finalScript)}`);
-    const componentLogicFn = componentModule.default;
-    if (typeof componentLogicFn !== 'function') {
-      throw new Error('Component script must export a default function');
-    }
-    const domParser = new DOMParser();
-    const doc = domParser.parseFromString(template, 'text/html');
-    let nodes = Array.from(doc.body.childNodes).filter(n => n.nodeType === Node.ELEMENT_NODE || n.nodeType === Node.TEXT_NODE);
-    nodes = preprocessNodes(nodes);
-    let cachedContext = null;
-    return (props) => {
-      const currentProps = props || {};
-      if (!cachedContext || currentProps !== cachedContext.__lastProps) {
-        const componentContext = componentLogicFn(currentProps);
-        cachedContext = { 
-          children: currentProps.children, 
-          __slots: currentProps.__slots, 
-          ...componentContext 
-        };
-        cachedContext.__lastProps = currentProps;
-      }
-      const { onMount, onUnmount, onUpdate, ...otherContext } = cachedContext;
-      const lifecycleHooks = { onMount, onUnmount, onUpdate };
-      if (nodes.length === 1) {
-        const element = parseNode(nodes[0], otherContext, styles);
-        if (typeof element === 'function') return wrapReactiveElement(element, lifecycleHooks);
-        if (element instanceof HTMLElement) return attachLifecycleHooks(element, lifecycleHooks);
-        return element;
-      } else if (nodes.length > 1) {
-        const children = nodes.map(n => parseNode(n, otherContext)).filter(Boolean);
-        return Element('div')({ children, ...(styles && { styles }), ...lifecycleHooks });
-      } else {
-        return Element('div')({ children: 'No content', ...(styles && { styles }), ...lifecycleHooks });
-      }
-    };
-  } catch (error) {
-    return () => Element('div')({
-      style: { color: 'red', border: '1px solid red', padding: '10px' },
-      children: [Element('h3')('Component Parse Error'), Element('pre')(error.message)]
-    });
-  }
+/**
+ * Parses template HTML into DOM nodes and runs directive preprocessors.
+ * The nodes are real DOM, cloned per component instance. No virtual nodes.
+ * @param {string} template
+ * @returns {Node[]}
+ */
+export function parseTemplateSource(template) {
+  const doc = new DOMParser().parseFromString(template || '', 'text/html');
+  return preprocessNodes(Array.from(doc.body.childNodes));
 }
 
 /**
- * Extracts the <template>, <script>, and <style> parts from the component file.
- * @param {string} htmlText - The raw text of the .html file.
- * @returns {{template: string, script: string, styles: string}}
+ * Parses an HTML SFC into a component function.
+ * Inline script is not executed. See sfc.js for the trust boundary.
+ * @param {string} htmlText
+ * @param {object} [options]
+ * @returns {Promise<Function>}
  */
-function extractParts(htmlText) {
-    htmlText = htmlText.replace(/\r\n?/g, '\n');
-    const templateMatch = htmlText.match(/<template>([\s\S]*?)<\/template>/i);
-    const scriptMatch = htmlText.match(/<script>([\s\S]*?)<\/script>/i);
-    const scriptSetupMatch = htmlText.match(/<script\s+setup[^>]*>([\s\S]*?)<\/script>/i);
-    const styleMatch = htmlText.match(/<style>([\s\S]*?)<\/style>/i);
-    
-    let template = '', script = '', styles = '';
-    
-    // Determine script content (prioritize scriptSetupMatch)
-    const activeScriptMatch = scriptSetupMatch || scriptMatch;
-    if (activeScriptMatch) {
-        script = activeScriptMatch[1].trim();
-    } else {
-        script = 'export default function(props) { return {}; }';
-    }
-    
-    // Determine template content
-    if (templateMatch) {
-        template = templateMatch[1].trim();
-    } else if (activeScriptMatch) {
-        template = htmlText.slice(0, activeScriptMatch.index).trim();
-    } else {
-        template = htmlText.trim();
-        if (styleMatch) {
-            template = template.replace(/<style>[\s\S]*?<\/style>/i, '').trim();
-        }
-    }
-    
-    // Handle styles
-    if (styleMatch) {
-        styles = styleMatch[1].trim();
-    }
-    
-    if (!template) template = '<div>Template not found</div>';
-    return { template, script, styles };
+export async function parseComponent(htmlText, options = {}) {
+  const { parseComponentSource } = await import('./sfc.js');
+  return parseComponentSource(htmlText, options);
 }
 
 /**
@@ -228,7 +155,8 @@ function parseNodeAttributes(node, context) {
       // Evaluate the bound expression in the component context (Vue-like).
       // Supports both ":prop="expr"" and ":prop="{{expr}}"" forms.
       const rawExpr = val.trim().replace(/^\{\{|\}\}$/g, '').trim();
-      val = _reactive(evaluateExpression(rawExpr, context));
+      // Live getter. The child reads it in a binding; it is not a virtual prop object.
+      val = computed(() => evaluateExpression(rawExpr, context));
       attrs[propName] = val;
     } else {
       attrs[attr.name] = normalizeAttrValue(val);
@@ -251,13 +179,13 @@ export function parseNode(node, context, componentStyles = null) {
     // Check for custom component tag
     const componentFn = findCustomComponent(node.tagName);
     if (componentFn) {
-        window.devWarn('[parser.js/parseNode] Found custom component', { tagName: node.tagName, context });
         const attrs = parseNodeAttributes(node, context);
         const parsingContext = {
             parseNode: (n, ctx) => parseNode(n, ctx || context),
             componentStyles
         };
         const directiveResult = processDirectives(node, context, parsingContext);
+        if (typeof directiveResult === 'function' || directiveResult instanceof Node) return directiveResult;
         if (directiveResult && typeof directiveResult === 'object') {
             Object.assign(attrs, directiveResult.attrs || {});
             for (const k of Object.keys(directiveResult)) {
@@ -267,7 +195,6 @@ export function parseNode(node, context, componentStyles = null) {
         const children = Array.from(node.childNodes).map(child => parseNode(child, attrs)).filter(child => child !== null && child !== undefined);
         attrs.children = children;
         if (componentStyles) attrs.styles = componentStyles;
-        window.devWarn('[parser.js/parseNode] Rendering custom component', { tagName: node.tagName, attrs });
         return componentFn(attrs);
     }
 
@@ -277,50 +204,13 @@ export function parseNode(node, context, componentStyles = null) {
         componentStyles
     };
     const directiveResult = processDirectives(node, context, parsingContext);
-    if (typeof directiveResult === 'function') {
+    // Control-flow directives return a function or real DOM (x-for anchors).
+    // They are not a props object and they are not virtual nodes.
+    if (typeof directiveResult === 'function' || directiveResult instanceof Node) {
         return directiveResult;
     }
     const props = directiveResult || { attrs: {} };
     if (componentStyles) props.styles = componentStyles;
     const children = Array.from(node.childNodes).map(child => parseNode(child, context)).filter(Boolean);
     return Element(node.tagName.toLowerCase())({ ...props, children });
-}
-
-/**
- * Extracts identifiers from script setup code for component parsing.
- * @param {string} code - The script setup code.
- * @returns {Array<string>} Array of identifier names.
- */
-function extractIdentifiers(code) {
-  const identifiers = [];
-  const declRegex = /^(?:const|let|var)\s+([^=;]+)/gm;
-  let m;
-  while ((m = declRegex.exec(code)) !== null) {
-    const lhs = m[1].trim().replace(/,$/, '');
-    if (lhs.startsWith('[')) {
-      const arr = lhs.slice(1, -1).split(',').map(s => s.trim()).filter(Boolean);
-      arr.forEach(v => {
-        const name = v.split('=')[0].trim();
-        if (name) identifiers.push(name);
-      });
-    } else if (lhs.startsWith('{')) {
-      const arr = lhs.slice(1, -1).split(',').map(s => s.trim()).filter(Boolean);
-      arr.forEach(v => {
-        let name = v;
-        if (v.includes(':')) name = v.split(':')[1].trim();
-        if (name.includes('=')) name = name.split('=')[0].trim();
-        if (name) identifiers.push(name);
-      });
-    } else {
-      const vars = lhs.split(',').map(s => s.trim());
-      vars.forEach(v => {
-        if (v) identifiers.push(v);
-      });
-    }
-  }
-  const fnClassRegex = /^(?:async\s+function|function|class)\s+([\w$]+)/gm;
-  while ((m = fnClassRegex.exec(code)) !== null) {
-    identifiers.push(m[1]);
-  }
-  return identifiers;
 }

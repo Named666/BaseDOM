@@ -1,16 +1,17 @@
 import * as state from './state.js';
+import { devWarn } from './dev.js';
 
-// Expose signals and helpers globally
-window.signal = state.signal;
-window.computed = state.computed;
-window.effect = state.effect;
-// Add any other exports you need globally
-
+if (typeof window !== 'undefined') {
+  window.signal = state.signal;
+  window.computed = state.computed;
+  window.effect = state.effect;
+  window.devWarn = devWarn;
+}
 
 import { initialize, renderRoute } from './render.js';
 import { startRouter } from './router.js';
-// Import and register directives
 import './directives.js';
+
 export function startApp(rootSelector = '#app') {
     async function doStart() {
         startRouter();
@@ -35,7 +36,18 @@ export function startApp(rootSelector = '#app') {
 // re-export anything else you need…
 export * from './navigation.js';
 export * from './components.js';
-export * from './state.js';
+export {
+  signal,
+  computed,
+  effect,
+  batch,
+  createOwner,
+  disposeOwner,
+  runWithOwner,
+  untrack,
+  isSignal,
+  unwrapSignal
+} from './state.js';
 export * from './html.js';
 export * from './render.js';
 export * from './router.js';
@@ -43,17 +55,5 @@ export * from './parser.js';
 export * from './registry.js';
 export * from './lifecycle.js';
 export * from './paths.js';
-
-// Development mode flag
-export const DEV_MODE = true;
-
-export function devWarn(message, node) {
-    if (DEV_MODE) console.warn(`[BaseDOM]: ${message}`, node);
-}
-
-if (DEV_MODE) {
-    devWarn('Development mode is enabled', document.body);
-    window.devWarn = devWarn;
-} else {
-    window.devWarn = () => {};
-}
+export * from './sfc.js';
+export { DEV_MODE, devWarn } from './dev.js';

@@ -167,15 +167,34 @@ function renderErrorView(err) {
   renderComponent(el, rootEl);
 }
 
+let linkInterceptionAttached = false;
+
+/**
+ * SPA interception is opt-in. Only anchors with `x-link` are handled.
+ * Ordinary links keep the browser's default navigation.
+ * @param {Element} link
+ * @param {MouseEvent} event
+ */
+export function shouldInterceptLink(link, event) {
+  if (!link || !event) return false;
+  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
+  if (!link.hasAttribute('x-link')) return false;
+  if (link.target && link.target !== '_self') return false;
+  if (link.hasAttribute('download')) return false;
+  if (typeof location !== 'undefined' && link.origin !== location.origin) return false;
+  return true;
+}
+
 // --- Link Interception ---
 export function attachLinkInterception() {
-  document.body.addEventListener('click', e => {
-    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-    const link = e.target.closest('a[x-link], a[href]');
-    if (link && link.origin === location.origin) {
-      e.preventDefault();
-      const href = link.getAttribute('href');
-      if (href !== location.pathname + location.search) navigate(href);
-    }
+  if (linkInterceptionAttached) return;
+  if (typeof document === 'undefined' || !document.body) return;
+  linkInterceptionAttached = true;
+  document.body.addEventListener('click', (event) => {
+    const link = event.target && event.target.closest ? event.target.closest('a[x-link]') : null;
+    if (!shouldInterceptLink(link, event)) return;
+    event.preventDefault();
+    const href = link.getAttribute('href');
+    if (href && href !== location.pathname + location.search) navigate(href);
   });
 }

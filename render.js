@@ -5,7 +5,7 @@ import { findMatchingRoute, parseQuery, routes } from './router.js';
 import { renderComponent, createComponent } from './components.js';
 import { signal } from './state.js';
 import { parseComponent } from './parser.js';
-import { devWarn } from './index.js';
+import { devWarn } from './dev.js';
 import { resolveComponentPath } from './paths.js';
 
 
@@ -118,7 +118,8 @@ async function resolveComponent(component) {
     const response = await fetch(componentPath);
     if (!response.ok) throw new Error(`Failed to fetch component: ${componentPath} (status: ${response.status})`);
     const sfcText = await response.text();
-    const fn = await parseComponent(sfcText);
+    const baseUrl = new URL(componentPath, window.location.href).href;
+    const fn = await parseComponent(sfcText, { baseUrl });
     // parsed component is expected to be a function(props) => element
     componentCache.set(componentPath, fn);
     devWarn(`Component loaded and cached: ${componentPath}`);

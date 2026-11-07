@@ -1,11 +1,69 @@
 /**
  * Unified Lifecycle System for BaseDOM
- * 
- * This module provides a centralized lifecycle management system with three core hooks:
- * - onMount: Called when an element is added to the DOM
- * - onUnmount: Called when an element is removed from the DOM
- * - onUpdate: Called when triggerUpdate is called on an element
+ *
+ * Hooks run against real DOM nodes. There is no virtual DOM.
+ * - onMount: the node has been inserted
+ * - onUnmount: the node is being removed; children run first
+ * - onUpdate: triggerUpdate(el) was called
+ *
+ * Call onMount/onUnmount/onCleanup during component setup. They attach to the
+ * active owner (see state.js). onCleanup from inside onMount is supported.
  */
+
+import { getCurrentOwner, runWithMountingOwner, onCleanup, disposeOwner } from './state.js';
+
+export { onCleanup };
+
+function currentComponentOwner(api) {
+  const owner = getCurrentOwner();
+  if (!owner || owner.disposed) {
+    throw new Error(`${api}() must be called during component setup or a lifecycle hook`);
+  }
+  return owner;
+}
+
+export function onMount(fn) {
+  if (typeof fn !== 'function') throw new TypeError('onMount(fn) expects a function');
+  currentComponentOwner('onMount').hooks.onMount.push(fn);
+}
+
+export function onUnmount(fn) {
+  if (typeof fn !== 'function') throw new TypeError('onUnmount(fn) expects a function');
+  currentComponentOwner('onUnmount').hooks.onUnmount.push(fn);
+}
+
+export function onUpdate(fn) {
+  if (typeof fn !== 'function') throw new TypeError('onUpdate(fn) expects a function');
+  currentComponentOwner('onUpdate').hooks.onUpdate.push(fn);
+}
+
+/** Builds the element hooks for one component owner. Unmount disposes that owner. */
+export function bindComponentOwner(owner) {
+  return {
+    onMount(el) {
+      runWithMountingOwner(owner, () => {
+        for (const fn of [...owner.hooks.onMount]) {
+          try { fn(el); } catch (error) { console.error('[BaseDOM] onMount error', error); }
+        }
+      });
+    },
+    onUnmount(el) {
+      if (owner.__hooksRanUnmount) return;
+      owner.__hooksRanUnmount = true;
+      runWithMountingOwner(owner, () => {
+        for (const fn of [...owner.hooks.onUnmount]) {
+          try { fn(el); } catch (error) { console.error('[BaseDOM] onUnmount error', error); }
+        }
+      });
+      disposeOwner(owner);
+    },
+    onUpdate(el) {
+      for (const fn of [...owner.hooks.onUpdate]) {
+        try { fn(el); } catch (error) { console.error('[BaseDOM] onUpdate error', error); }
+      }
+    }
+  };
+}
 
 /**
  * Attaches lifecycle hooks to an element
@@ -19,21 +77,15 @@ export function attachLifecycleHooks(element, hooks = {}) {
         if (typeof hooks[hook] === 'function') {
             const key = `__${hook}`;
             const existing = element[key];
-            console.log(`[lifecycle] Attaching ${hook} to element. Existing: ${!!existing}`);
             element[key] = existing
-                ? (...args) => { 
-                    console.log(`[lifecycle] Composite ${hook} - calling existing`);
-                    try { existing(...args); } catch (e) {} 
-                    console.log(`[lifecycle] Composite ${hook} - calling new`);
-                    try { hooks[hook](...args); } catch (e) {} 
+                ? (...args) => {
+                    try { existing(...args); } catch (error) { console.error(`[BaseDOM] ${hook} error`, error); }
+                    try { hooks[hook](...args); } catch (error) { console.error(`[BaseDOM] ${hook} error`, error); }
                 }
                 : hooks[hook];
-            // For onUpdate, allow programmatic triggering via element.onUpdate() TODO
             if (hook === 'onUpdate') {
                 element.onUpdate = (...args) => {
-                    if (typeof element.__onUpdate === 'function') {
-                        element.__onUpdate.apply(element, args);
-                    }
+                    if (typeof element.__onUpdate === 'function') element.__onUpdate.apply(element, args);
                 };
             }
         }
@@ -50,29 +102,38 @@ export function attachLifecycleHooks(element, hooks = {}) {
  */
 function processNodesRecursively(element, hookName, passElement = true, childrenFirst = false) {
     if (!element) return;
-    const processNode = node => {
-        if (childrenFirst && node.children) Array.from(node.children).forEach(processNode);
-        if (typeof node[hookName] === 'function') {
-            // Only call onMount if not already mounted
-            if (hookName === '__onMount' && node.__mounted) {
-                console.log(`[lifecycle] Skipping ${hookName} - already mounted`);
-                return;
+    const visit = (node) => {
+        if (!node) return;
+        if (node.nodeType === Node.COMMENT_NODE) {
+            if (hookName === '__onUnmount' && typeof node.__dispose === 'function') {
+                const dispose = node.__dispose;
+                node.__dispose = null;
+                try { dispose(); } catch (error) { console.error('[BaseDOM] anchor cleanup error', error); }
             }
+            return;
+        }
+        if (node.nodeType !== Node.ELEMENT_NODE) return;
+        if (hookName === '__onUnmount' && node.__unmounted) return;
+        if (childrenFirst) Array.from(node.childNodes).forEach(visit);
+        const alreadyMounted = hookName === '__onMount' && node.__mounted;
+        if (typeof node[hookName] === 'function' && !alreadyMounted) {
             try {
-                console.log(`[lifecycle] Calling ${hookName} on node`);
                 passElement ? node[hookName](node) : node[hookName]();
-                if (hookName === '__onMount') node.__mounted = true;
-            } catch (e) {
-                console.error(`[lifecycle] Error in ${hookName}:`, e);
+            } catch (error) {
+                console.error(`[BaseDOM] ${hookName} error`, error);
             }
         }
-        if (!childrenFirst && node.children) Array.from(node.children).forEach(processNode);
+        if (hookName === '__onMount') {
+            node.__mounted = true;
+            node.__unmounted = false;
+        } else if (hookName === '__onUnmount') {
+            node.__mounted = false;
+            node.__unmounted = true;
+        }
+        if (!childrenFirst) Array.from(node.childNodes).forEach(visit);
     };
-    if (element instanceof DocumentFragment) {
-        Array.from(element.childNodes).forEach(node => node.nodeType === Node.ELEMENT_NODE && processNode(node));
-    } else if (element.nodeType === Node.ELEMENT_NODE) {
-        processNode(element);
-    }
+    if (element instanceof DocumentFragment) Array.from(element.childNodes).forEach(visit);
+    else visit(element);
 }
 
 
@@ -92,18 +153,9 @@ export function callOnMountRecursive(node) {
  * @param {Node} node - The node to unmount.
  */
 export function callOnUnmountRecursive(node) {
-    // Use the generic walker to perform an unmount traversal.
-    // Children-first traversal ensures children unmount before their parent.
+    // Children first, then the node. Flags are cleared for the whole subtree
+    // so a later mount can run again. Comment anchors may dispose list effects.
     processNodesRecursively(node, '__onUnmount', true, true);
-    // Clear the __mounted flag to allow re-mounting
-    if (node.nodeType === Node.ELEMENT_NODE) {
-        node.__mounted = false;
-        if (node.children) Array.from(node.children).forEach(child => {
-            if (child.nodeType === Node.ELEMENT_NODE) {
-                child.__mounted = false;
-            }
-        });
-    }
 }
 
 /**

@@ -1,5 +1,5 @@
 // components.js
-import { effect } from './state.js';
+import { effect, createOwner, disposeOwner, runWithOwner } from './state.js';
 import {
   attachLifecycleHooks,
   callOnMountRecursive,
@@ -44,6 +44,37 @@ const injectedStyles = new Set();
  * @param {*} value - The attribute value.
  * @param {Array} effectsToCleanup - Array to collect cleanup functions.
  */
+const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'xlink:href']);
+const BOOLEAN_PROPS = new Set(['checked', 'selected', 'disabled', 'readOnly', 'multiple', 'hidden', 'required']);
+const RENDER_DISPOSE = Symbol.for('basedom.renderDispose');
+
+function isJavascriptUrl(value) {
+  return typeof value === 'string' && /^\s*javascript:/i.test(value);
+}
+
+/** Writes one attribute or DOM property. Does not parse HTML. */
+function assignAttr(el, key, val) {
+  if (URL_ATTRS.has(key) && isJavascriptUrl(val)) {
+    el.removeAttribute(key);
+    return;
+  }
+  if (key === 'value') {
+    const next = val == null ? '' : String(val);
+    if ('value' in el && el.value !== next) el.value = next;
+    el.setAttribute('value', next);
+    return;
+  }
+  if (BOOLEAN_PROPS.has(key)) {
+    const on = val === '' || (Boolean(val) && val !== 'false');
+    if (key in el) el[key] = on;
+    if (on) el.setAttribute(key, '');
+    else el.removeAttribute(key);
+    return;
+  }
+  if (val == null || val === false) el.removeAttribute(key);
+  else el.setAttribute(key, val === true ? '' : String(val));
+}
+
 function applyAttribute(el, key, value, effectsToCleanup) {
   value = normalizeAttrValue(value);
   if (key.startsWith('on') && typeof value === 'function') {
@@ -52,11 +83,11 @@ function applyAttribute(el, key, value, effectsToCleanup) {
     if (el[handlerProp]) el.removeEventListener(eventName, el[handlerProp]);
     el.addEventListener(eventName, value);
     el[handlerProp] = value;
-  } else if (key === 'class' && typeof value === 'object') {
+  } else if (key === 'class' && typeof value === 'object' && value !== null && !isSignalLike(value)) {
     effectsToCleanup.push(effect(() => {
       el.className = Object.entries(value).filter(([, v]) => typeof v === 'function' ? v() : v).map(([k]) => k).join(' ');
     }));
-  } else if (key === 'style' && typeof value === 'object') {
+  } else if (key === 'style' && typeof value === 'object' && value !== null && !isSignalLike(value)) {
     effectsToCleanup.push(effect(() => {
       for (const [styleKey, styleValue] of Object.entries(value)) {
         el.style[styleKey] = typeof styleValue === 'function' ? styleValue() : styleValue;
@@ -64,20 +95,17 @@ function applyAttribute(el, key, value, effectsToCleanup) {
     }));
   } else if (typeof value === 'function') {
     effectsToCleanup.push(effect(() => {
-      const val = value();
-      if (typeof val === 'boolean') {
-        if (val) el.setAttribute(key, '');
-        else el.removeAttribute(key);
-      } else {
-        el.setAttribute(key, val);
-      }
+      assignAttr(el, key, value());
     }));
   } else if (typeof value === 'boolean') {
-    if (value) el.setAttribute(key, '');
-    else el.removeAttribute(key);
+    assignAttr(el, key, value);
   } else {
-    el.setAttribute(key, value);
+    assignAttr(el, key, value);
   }
+}
+
+function isSignalLike(value) {
+  return typeof value === 'function' && (value.__isSignal || value._isSignal || typeof value.set === 'function');
 }
 
 /**
@@ -190,20 +218,23 @@ function appendChildToElement(element, child, effectsToCleanup) {
         }
       };
       collect(reactiveValue);
-      let newNodes = results;
-      // Remove old nodes - call unmount BEFORE inserting new ones
-      if (currentChildNodes.length > 0) {
-        console.log('[appendChildToElement] Unmounting', currentChildNodes.length, 'old nodes');
+      const newNodes = results;
+      // Same text node: write textContent. This is the fine-grained path, not a virtual DOM diff.
+      if (newNodes.length === 1 && newNodes[0].nodeType === Node.TEXT_NODE
+        && currentChildNodes.length === 1 && currentChildNodes[0].nodeType === Node.TEXT_NODE) {
+        if (currentChildNodes[0].textContent !== newNodes[0].textContent) {
+          currentChildNodes[0].textContent = newNodes[0].textContent;
+        }
+        return;
+      }
+      if (newNodes.length === currentChildNodes.length && newNodes.every((node, i) => node === currentChildNodes[i])) {
+        return;
       }
       currentChildNodes.forEach(node => {
         if (node.nodeType === Node.ELEMENT_NODE) callOnUnmountRecursive(node);
         if (node.parentNode === element) element.removeChild(node);
       });
       currentChildNodes = [];
-      // Insert new nodes - call mount AFTER removing old ones
-      if (newNodes.length > 0) {
-        console.log('[appendChildToElement] Mounting', newNodes.length, 'new nodes');
-      }
       newNodes.forEach(newNode => {
         element.insertBefore(newNode, marker);
         currentChildNodes.push(newNode);
@@ -216,7 +247,8 @@ function appendChildToElement(element, child, effectsToCleanup) {
   } else if (child instanceof HTMLElement) {
     element.appendChild(child);
   } else if (child instanceof DocumentFragment) {
-    element.appendChild(child.cloneNode(true));
+    // Live fragments (x-for anchors) must keep their real nodes. Other fragments are copied.
+    element.appendChild(child.__live ? child : child.cloneNode(true));
   } else if (typeof child === 'object' && child !== null && child.__html) {
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = child.__html;
@@ -320,26 +352,73 @@ export function createComponent(tag, options = {}) {
  * @param {Function|HTMLElement|DocumentFragment|string|number} component - The component to render.
  * @param {HTMLElement} container - The container element.
  */
+function resolveTarget(target) {
+  if (typeof target === 'string') {
+    if (typeof document === 'undefined') return null;
+    return document.querySelector(target);
+  }
+  return target || null;
+}
+
+function releaseContainer(container) {
+  const previous = container[RENDER_DISPOSE];
+  container[RENDER_DISPOSE] = null;
+  if (typeof previous === 'function') previous();
+  else replaceContent(container, null);
+}
+
+/**
+ * Mounts a component once. Signal updates flow through the bindings created
+ * while the component ran; the component function is not called again.
+ * @param {Function|HTMLElement|DocumentFragment|string|number} component
+ * @param {HTMLElement|string} target
+ * @returns {Node|string|number|null}
+ */
+export function mount(component, target) {
+  const container = resolveTarget(target);
+  if (!container) throw new Error(`mount target not found: ${String(target)}`);
+  releaseContainer(container);
+  const node = typeof component === 'function' ? component() : component;
+  if (node instanceof HTMLElement || node instanceof DocumentFragment) replaceContent(container, node);
+  else container.textContent = node == null ? '' : String(node);
+  container[RENDER_DISPOSE] = () => {
+    container[RENDER_DISPOSE] = null;
+    replaceContent(container, null);
+  };
+  return node;
+}
+
+/** Removes a mount() or renderComponent() view and disposes its effects. */
+export function unmount(target) {
+  const container = resolveTarget(target);
+  if (!container) return;
+  releaseContainer(container);
+}
+
 export function renderComponent(component, container) {
-  replaceContent(container, null); // Unmount existing content
+  if (!container) return;
+  releaseContainer(container);
   if (typeof component === 'function') {
-    // Make the renderer reactive: re-run the component function when its
-    // reactive dependencies change and update the container accordingly.
-    effect(() => {
+    // Coarse path for plain render functions: re-call and replace real DOM.
+    // SFC bindings should use mount(), which does not re-run the component.
+    const owner = createOwner();
+    const disposeEffect = runWithOwner(owner, () => effect(() => {
       replaceContent(container, null);
       const el = component();
-      if (el instanceof HTMLElement || el instanceof DocumentFragment) {
-        safeAppendElement(container, el);
-      } else {
-        container.textContent = String(el);
-      }
-    });
-  } else {
-    const el = component;
-    if (el instanceof HTMLElement || el instanceof DocumentFragment) {
-      safeAppendElement(container, el);
-    } else {
-      container.textContent = String(el);
-    }
+      if (el instanceof HTMLElement || el instanceof DocumentFragment) safeAppendElement(container, el);
+      else container.textContent = el == null ? '' : String(el);
+    }));
+    container[RENDER_DISPOSE] = () => {
+      disposeEffect();
+      disposeOwner(owner);
+      replaceContent(container, null);
+    };
+    return;
   }
+  if (component instanceof HTMLElement || component instanceof DocumentFragment) safeAppendElement(container, component);
+  else container.textContent = component == null ? '' : String(component);
+  container[RENDER_DISPOSE] = () => {
+    container[RENDER_DISPOSE] = null;
+    replaceContent(container, null);
+  };
 }

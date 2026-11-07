@@ -1,14 +1,19 @@
 # BaseDOM
 
-BaseDOM is a lightweight, reactive JavaScript framework for building dynamic web applications without build setup. It features signal-based reactivity, declarative components, and powerful directives using native ES modules.
+BaseDOM is a small reactive UI library. You write HTML, and signals update the real DOM. There is no virtual DOM and no runtime dependency.
+
+It is closer to Solid than to React: a component runs once, and a binding writes to the text node or attribute that read the signal. The file format is closer to a Vue single-file component, so it can load in the browser without a build. It is not Angular: there is no dependency injection, compiler, or platform.
+
+Vue's stable 3.5 runtime still diffs virtual nodes. Vue's no-VDOM mode (Vapor) is opt-in and, as of November 2026, still in the 3.6 release candidates. BaseDOM does not include either runtime. See [docs/design.md](docs/design.md). Nothing in this repository is a performance claim.
+
+The tested surface is signals, lifecycle cleanup, HTML templates (`x-if`, `x-for`, `x-model`, events, text), and `.html` components. The router, store, form helpers, and fetch/HTML swap are still in the package and are not part of that tested surface. Known gaps are in [docs/limitations.md](docs/limitations.md).
 
 ## Philosophy
 
-- **HTML-Centric:** Build with familiar HTML syntax in Single-File Components (.html).
-- **Declarative & Reactive:** UI as a function of state with fine-grained reactivity.
-- **Component-Based:** Reusable, self-contained components.
-- **Progressively Adoptable:** Start small, scale up.
-- **Zero Build Setup:** Run directly in the browser using ES modules.
+- **Real DOM.** `{{ count }}` sets `textContent` on the existing text node. Lists move real elements. There is no vnode tree to diff.
+- **HTML components.** `<template>`, `<script setup>`, and `<style>` in one `.html` file.
+- **Run without a build, or compile with Vite.** Inline script in fetched HTML is not executed. See [docs/sfc.md](docs/sfc.md).
+- **Small on purpose.** No runtime dependencies. Vite is a dev dependency. Do not add a virtual DOM to look more like React or Vue.
 
 ## Key Features
 
@@ -22,61 +27,37 @@ BaseDOM is a lightweight, reactive JavaScript framework for building dynamic web
 - **Form System:** Comprehensive form management with validation, state tracking, and UI components.
 - **Lifecycle Hooks:** `onMount`, `onUnmount`, and `onUpdate` hooks for components and elements.
 
-## Getting Started
+## Getting started
 
-1. Download or clone the `basedom` directory.
-2. Create `index.html`:
+From this repository:
 
-   ```html
-   <!DOCTYPE html>
-   <html lang="en">
-   <head>
-     <meta charset="UTF-8">
-     <title>BaseDOM App</title>
-   </head>
-   <body>
-     <div id="app"></div>
-     <script type="module" src="app.js"></script>
-   </body>
-   </html>
-   ```
+```bash
+npm install
+npm test
+npm run example
+```
 
-3. Create a component `components/Counter.html`:
+Open `http://127.0.0.1:4173/examples/no-build/`. The component is `examples/no-build/components/Counter.html`. Its script is a normal module, `counter.setup.js`, referenced by `<script setup src>`. `app.js` loads it and mounts it once:
 
-   ```html
-   <template>
-     <div class="counter">
-       <h1>{{ message }}</h1>
-       <p>Count: {{ count }}</p>
-       <button @click="increment">Increment</button>
-       <input x-model="message">
-     </div>
-   </template>
+```js
+import { loadComponent } from '../../sfc.js';
+import { mount } from '../../components.js';
 
-   <script setup>
-   import { signal } from '../basedom/state.js';
+const Counter = await loadComponent(new URL('./components/Counter.html', import.meta.url).href);
+mount(Counter, '#app');
+```
 
-   const [count, setCount] = signal(0);
-   const [message, setMessage] = signal('Hello, BaseDOM!');
+`mount` does not re-run the component when a signal changes. The text node and the list update themselves.
 
-   const increment = () => setCount(count() + 1);
-   </script>
+To compile an inline `<script setup>` instead, use the Vite example:
 
-   <style>
-   .counter { padding: 2rem; border: 1px solid #eee; border-radius: 8px; text-align: center; }
-   input { margin-top: 1rem; padding: 0.5rem; }
-   </style>
-   ```
+```bash
+npm run example:build
+```
 
-4. Create `app.js`:
+That runs `examples/vite-counter` through `vite/plugin.js`. Replacing Vite is not required for the library to run.
 
-   ```javascript
-   import { startApp } from './basedom/index.js';
-   import { defineRoute } from './basedom/router.js';
-
-   defineRoute({ path: '/', component: './components/Counter.html' });
-   startApp('#app');
-   ```
+Checks: `npm test` (Node's test runner and jsdom) and the Vite build above. CI runs both.
 
 ## Core Concepts
 
@@ -104,20 +85,25 @@ effect(() => {
 
 Components are `.html` files containing `<template>`, `<script>`, and `<style>`.
 
-#### `<script setup>` Mode
-Top-level variables are automatically exposed to the template.
+#### `<script setup>`
+
+Fetched HTML does not run inline script. Either compile the file with the Vite plugin, or point `src` at a module in the same directory:
 
 ```html
-<script setup>
-import { signal } from './basedom/state.js';
-const [name, setName] = signal('World');
-function greet() { alert(`Hello ${name()}!`); }
-</script>
-
-<template>
-  <button @click="greet">Greet {{ name }}</button>
-</template>
+<script setup src="./counter.setup.js"></script>
 ```
+
+```js
+import { signal } from '../../../state.js';
+
+export default function setup() {
+  const [name, setName] = signal('World');
+  function greet() { /* use name() */ }
+  return { name, greet };
+}
+```
+
+The template calls `greet` and reads `name`. Assignment in a template (`count = count + 1`) writes through the signal's `.set`. Details and the server-template rules are in [docs/sfc.md](docs/sfc.md).
 
 ### Component Composition
 
@@ -224,6 +210,8 @@ navigate('/dashboard/users/123');
 ```
 
 ## Declarative AJAX (Fetch)
+
+This block describes the fetch helpers that ship in the package. They are not covered by the regression tests in 0.4.0, and swapping HTML with `innerHTML` is a trusted-HTML path, not the SFC sandbox.
 
 HTMX-inspired AJAX directly in your HTML.
 
@@ -390,7 +378,7 @@ onMount((el) => {
 
 ## API Reference
 
-For a full list of exported functions and detailed API documentation, see [Reference.md](./Reference.md).
+For the loading rules, see [docs/sfc.md](docs/sfc.md). For what is not done, see [docs/limitations.md](docs/limitations.md) and [docs/roadmap.md](docs/roadmap.md).
 
 ## Contributing
 
