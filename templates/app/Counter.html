@@ -1,0 +1,8 @@
+<template>
+  <p>{{ count }} <button type="button" @click="increment">Add</button></p>
+</template>
+<script setup>
+import { signal } from 'basedom';
+const [count, setCount] = signal(0);
+function increment() { setCount((value) => value + 1); }
+</script>

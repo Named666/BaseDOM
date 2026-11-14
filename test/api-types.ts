@@ -1,4 +1,4 @@
-import { computed, createForm, createResource, defineProps, defineSfc, emit, inject, navigate, provide, setStyleNonce, signal, startRouter, watch } from '../index.js';
+import { computed, createResource, defineProps, defineSfc, emit, inject, navigate, provide, setStyleNonce, signal, startRouter, watch } from '../index.js';
 
 const [count, setCount] = signal(0);
 setCount(count() + 1);
@@ -17,10 +17,6 @@ View();
 setStyleNonce('nonce');
 startRouter({ mode: 'hash' });
 void navigate('/about');
-
-const form = createForm({ email: '' });
-form.fields.email('a@b.c');
-form.dispose();
 
 const props = defineProps({ count: { default: 1, required: true } });
 props.count();

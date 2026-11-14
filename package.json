@@ -5,14 +5,13 @@
   "description": "Small reactive UI library. Real DOM updates, no virtual DOM, no runtime dependencies.",
   "main": "./index.js",
   "type": "module",
+  "bin": {
+    "basedom": "./scripts/create.mjs"
+  },
   "files": [
     "components.js",
-    "directives.js",
     "directives-core.js",
-    "fetch-directives.js",
     "expression.js",
-    "fetch.js",
-    "form.js",
     "html.js",
     "index.js",
     "lifecycle.js",
@@ -22,8 +21,6 @@
     "render.js",
     "router.js",
     "state.js",
-    "store.js",
-    "validation.js",
     "paths.js",
     "dev.js",
     "diagnostics.js",
@@ -39,7 +36,9 @@
     "docs",
     "examples",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "scripts/create.mjs",
+    "templates"
   ],
   "types": "./index.d.ts",
   "exports": {
@@ -51,7 +50,9 @@
     "./state.js": "./state.js",
     "./components.js": "./components.js",
     "./router.js": "./router.js",
-    "./form.js": "./form.js",
+    "./registry.js": "./registry.js",
+    "./navigation.js": "./navigation.js",
+    "./render.js": "./render.js",
     "./vite": "./vite/plugin.js"
   },
   "scripts": {

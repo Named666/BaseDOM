@@ -72,62 +72,6 @@ export function clearComponentCache(path) {
   }
 }
 
-const hmrProxies = new Map();
-
-/**
- * Gets or creates an HMR proxy for a component.
- * @param {string} id - Unique ID for the component (usually the file path).
- * @param {Function} initialFn - The initial component function.
- * @returns {Function} A proxy function that can be updated.
- */
-export function getHMRProxy(id, initialFn) {
-  if (hmrProxies.has(id)) {
-    const [getFn, setFn] = hmrProxies.get(id);
-    if (initialFn) setFn(() => initialFn);
-    return (props) => getFn()(props);
-  }
-  
-  const [getFn, setFn] = signal(() => initialFn);
-  const proxy = (props) => {
-    const fn = getFn();
-    return typeof fn === 'function' ? fn(props) : null;
-  };
-  
-  proxy.__isHMRProxy = true;
-  proxy.__hmrId = id;
-  proxy.update = (newFn) => {
-    setFn(() => newFn);
-  };
-  
-  hmrProxies.set(id, [getFn, setFn, proxy]);
-  return proxy;
-}
-
-// HMR Support for Vite
-if (typeof window !== 'undefined') {
-  window.addEventListener('basedom:hmr', async (e) => {
-    const { file, component } = e.detail;
-    devWarn(`HMR update received for: ${file}`);
-    
-    // Normalize file path to match what might be in the cache
-    const relativePath = file.replace(/.*\/public\//, '/').replace(/.*\/src\//, '/src/');
-    
-    // Update proxy if it exists
-    if (hmrProxies.has(file)) {
-      const [, setFn] = hmrProxies.get(file);
-      setFn(() => component);
-    }
-    
-    clearComponentCache(relativePath);
-    
-    // Re-render the current route to reflect changes
-    if (typeof renderRoute === 'function') {
-      await renderRoute(location.pathname + location.search);
-    }
-  });
-}
-
-
 async function resolveComponent(component) {
   if (isLazyComponent(component)) {
     if (!component.__basedomResolved) {

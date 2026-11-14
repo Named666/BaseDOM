@@ -75,7 +75,8 @@ export function basedom(options = {}) {
       if (importer && importer.includes('\0basedom:') && (id.startsWith('./') || id.startsWith('../'))) {
         const owner = importer.split('\0basedom:')[1].replace(/\.js$/, '');
         const resolved = path.resolve(path.dirname(owner), id);
-        if (fs.existsSync(resolved)) return resolved;
+        if (resolved.endsWith('.html')) id = resolved;
+        else if (fs.existsSync(resolved)) return resolved;
       }
       if (id === 'virtual:basedom-graph' || id === GRAPH_ID) return GRAPH_ID;
       if (resolveOptions && resolveOptions.scan) return null;

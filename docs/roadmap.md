@@ -7,8 +7,6 @@ Shipped and covered by tests: live `defineProps`, `emit`, default/named/scoped s
 Still open:
 
 1. **Keyed list polish.** Keep the real-element map, and stop comment anchors from affecting CSS.
-2. **Route guards and scroll restoration.** They ship. They are not part of the tested contract.
-3. **Form builders.** `createForm` is tested. `Form`, `Field`, and `Submit` still do not keep the input and the error text live.
-4. **Fetch swap.** Decide whether HTML responses stay a trusted sink or go through `renderServerTemplate`. Test whichever choice, including unmount of replaced nodes.
-5. **Expression coverage.** Add optional chaining and arrow callbacks only if a real template needs them. Do not switch back to `new Function`.
-6. **Tooling depth.** The graph parser is not a language server. Do not add a virtual DOM, CSS modules, keep-alive, transitions, portals, or SSR to chase a feature list.
+2. **Scroll restoration.** Route guards ship and a test covers a newer navigation superseding `beforeEnter`. Scroll restoration does not have a dedicated test.
+3. **Expression coverage.** Add optional chaining and arrow callbacks only if a real template needs them. Do not switch back to `new Function`.
+4. **Tooling depth.** The graph parser is not a language server. Do not add a virtual DOM, CSS modules, keep-alive, transitions, portals, or SSR to chase a feature list.

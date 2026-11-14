@@ -20,10 +20,17 @@
 - HMR and the graph parser are not included in production bundles.
 - Template and runtime failures use `BD1xxx` codes with a file, expression, and fix hint when known.
 
+### DX
+
+- `basedom create <directory>` (also `npm create basedom`) copies a Vite app with one counter. Child `.html` imports register themselves. The tag is the file name.
+- `examples/todo` is a list with filters, a `/todo/:id` page loaded by `load()`, a validated form, and a child with props, emit, and a slot.
+
 ### Breaking
 
 - `@name` on a component tag is a component event. It is no longer forwarded as a native listener on the root.
 - Scoped CSS no longer matches slotted content.
+- Removed `createForm`, `Form`, `Field`, `Submit`, `validation.js`, `store.js`, `fetch.js`, `fetch-directives.js`, and the `directives.js` entry that loaded them. A form is `x-model` and the screen's submit function. Shared state is a module of signals.
+- Removed `startApp`, the `window.signal` / `window.computed` / `window.effect` globals, `getHMRProxy`, and the `basedom:hmr` window event. Mount a component or call `startRouter` yourself. Vite HMR updates `.html` screens directly.
 
 ## 0.4.0
 

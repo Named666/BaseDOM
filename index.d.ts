@@ -82,15 +82,3 @@ export function defineRoute(config: RouteConfig): RouteConfig;
 export function startRouter(options?: { mode?: 'history' | 'hash' }): void;
 export function navigate(path: string, options?: { replace?: boolean; triggeredByPopstate?: boolean }): Promise<void>;
 export function shouldInterceptLink(link: Element, event: MouseEvent): boolean;
-
-export function createForm(initialValues?: Record<string, unknown>): {
-  fields: Record<string, ((next?: unknown) => unknown) & { set: (next: unknown) => void }>;
-  errors: Getter<Record<string, string>>;
-  isValid: Getter<boolean>;
-  isSubmitting: Getter<boolean>;
-  submitError: Getter<string | null>;
-  setValidator(name: string, validator: ((value: unknown) => string | null) | Array<(value: unknown) => string | null>): void;
-  handleSubmit(onSubmit: (values: Record<string, unknown>) => unknown): (event: { preventDefault(): void }) => Promise<void>;
-  reset(): void;
-  dispose(): void;
-};

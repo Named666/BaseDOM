@@ -15,17 +15,22 @@ function increment() { setCount((value) => value + 1); }
 </script>
 
 <style>
+& { max-width: 36rem; }
 p { font-weight: 600; }
 </style>
 ```
 
-`setup` runs once per instance. Names it declares are visible to the template. Return values are not required when the Vite plugin compiles the file: the plugin returns those bindings for you. A hand-written setup module should `return` the bindings.
+`setup` runs once per instance. Names it declares are visible to the template. Return values are not required when the Vite plugin compiles the file: the plugin returns those bindings for you. A hand-written setup module should `return` the bindings. `const props = defineProps()` is a normal binding. The compiler names its own setup argument `__props` when your script already declares `props`.
+
+Scoped CSS adds a class to the component root and prefixes other selectors as descendants of that class. Style the root with `&`. Slotted content is marked `data-basedom-slot` and is not matched.
 
 ## Props, events, slots, and context
 
 Call `defineProps` during setup. Each declared prop is a getter. `props.count()` reads the current value, including after the parent updates it. The child is not remounted. `const n = props.count()` stores a snapshot. Return the getter (`count: props.count`) when the template should keep updating. A required prop with no default warns `BD1004` in development. An undeclared prop warns `BD1005`.
 
 `emit('save', payload)` calls the parent's `@save` handler with that payload. It does not dispatch a DOM event. `@save` on a component tag is that listener. A native `@click` belongs on an element inside the template. A native event name passed as `onClick` from JavaScript is still attached to the root; a template `@name` is not.
+
+The Vite plugin registers a child `.html` import under its file name. `todo-item.html` is the tag `<todo-item>`. Import it from the parent and use the tag. A no-build app still calls `registerComponent(name, component)` after `loadComponent`.
 
 Default slot content is the element's children. `x-slot="extra"` fills `<slot name="extra">`. `:item` on a `<slot>` is a scoped value and stays live. Slot markup is parsed in the parent's scope, so a parent signal used inside the slot keeps updating. Slotted elements are marked `data-basedom-slot`. Scoped CSS does not style that element or its descendants. The child's own elements still match.
 
@@ -43,7 +48,7 @@ Default slot content is the element's children. `x-slot="extra"` fills `<slot na
 
 `lazy(() => loadComponent(url))` or `lazy(() => import('./screen.js'))` loads a screen on navigation. An `async function` component is treated the same way. A normal function is the screen itself and is not called early.
 
-`load({ params, query, path, signal })` runs before the screen mounts. The screen reads `routeData` from props. A newer `navigate()` aborts `signal` and drops the result. While it waits, the outlet says `Loading…`. A thrown error renders inside the outlet. An unknown path still renders 404 inside the layout.
+`load({ params, query, path, signal })` runs before the screen mounts. The screen reads `routeData` from props. Setup also receives `params` and `query` on its argument. The address bar is updated after that render, so `location.pathname` can still be the previous URL. A newer `navigate()` aborts `signal` and drops the result. While it waits, the outlet says `Loading…`. A thrown error renders inside the outlet. An unknown path still renders 404 inside the layout. The first matching route wins, so a path with a param has to be listed before a catch-all param.
 
 ## Two ways to load a component
 

@@ -257,6 +257,9 @@ export function compileSfcToModule(source, filename = 'component.html', options 
     bindings = [...new Set([...imported, ...local])];
   }
 
+  const registered = registerHtmlComponents(prelude, runtime);
+  prelude = registered.prelude;
+  const registerCalls = registered.calls;
   const hmr = options.hmr !== false;
   let signalLocal = null;
   if (hmr && prelude) {
@@ -267,9 +270,10 @@ export function compileSfcToModule(source, filename = 'component.html', options 
   const track = hmr && signalLocal
     ? `const ${signalLocal} = (...args) => {\n  const pair = __basedomSignal(...args);\n  const track = globalThis.__BASEDOM_HMR_TRACK__;\n  if (typeof track === 'function') track(pair);\n  return pair;\n};\n`
     : '';
+  const param = bindings.includes('props') ? '__props' : 'props';
   const setup = parts.scriptSrc && !parts.hasInlineScript
     ? '__setup'
-    : `function __setup(props) {\n${track}${body}\n  return { ${bindings.join(', ')} };\n}`;
+    : `function __setup(${param}) {\n${track}${body}\n  return { ${bindings.join(', ')} };\n}`;
 
   const definition = `{
   name: ${JSON.stringify(componentName(filename))},
@@ -281,6 +285,7 @@ export function compileSfcToModule(source, filename = 'component.html', options 
   if (!hmr) {
     return `import { defineSfc } from ${JSON.stringify(runtime)};
 ${prelude}
+${registerCalls}
 export default defineSfc(${definition});
 `;
   }
@@ -295,6 +300,7 @@ export default defineSfc(${definition});
   return `import { defineSfc } from ${JSON.stringify(runtime)};
 import { createHotComponent } from ${JSON.stringify(hmrRuntime)};
 ${prelude}
+${registerCalls}
 const __setupFn = ${setup};
 export const __sfc = {
   id: ${JSON.stringify(filename)},
@@ -374,6 +380,27 @@ function bindRelativeImports(prelude) {
     return `import * as ${ns} from ${quote}${spec}${quote};\n${lets}`;
   });
   return { prelude: next, accept: accept.join('\n') };
+}
+
+function registerHtmlComponents(prelude, runtime) {
+  const registry = runtime.replace(/sfc\.js$/, 'registry.js');
+  const calls = [];
+  let index = 0;
+  const next = String(prelude || '').replace(
+    /import\s+(?:([A-Za-z_$][\w$]*)\s+from\s+)?(['"])(\.[^'"]+\.html)\2\s*;?/g,
+    (full, local, quote, spec) => {
+      const base = spec.split('/').pop().replace(/\.html$/i, '').toLowerCase();
+      const binding = local || `__bdView${index++}`;
+      calls.push(`registerComponent(${JSON.stringify(base)}, ${binding});`);
+      return local ? full : `import ${binding} from ${quote}${spec}${quote};`;
+    }
+  );
+  if (!calls.length) return { prelude: next, calls: '' };
+  const already = /\bregisterComponent\b/.test(prelude);
+  return {
+    prelude: already ? next : `import { registerComponent } from ${JSON.stringify(registry)};\n${next}`,
+    calls: `${calls.join('\n')}\n`
+  };
 }
 
 function relativeImports(prelude) {

@@ -1,406 +1,194 @@
 # BaseDOM
 
-BaseDOM is a small reactive UI library. You write HTML, and signals update the real DOM. There is no virtual DOM and no runtime dependency.
+Real-DOM HTML components. A screen is one `.html` file. Signals write the nodes you authored. There is no virtual DOM, no JSX, and no runtime dependency.
 
-It is closer to Solid than to React: a component runs once, and a binding writes to the text node or attribute that read the signal. The file format is closer to a Vue single-file component, so it can load in the browser without a build. Shared values use `provide` / `inject` on the component tree. That is not a dependency-injection container.
-
-Vue's stable 3.5 runtime still diffs virtual nodes. Vue's no-VDOM mode (Vapor) is opt-in and, as of November 2026, still in the 3.6 release candidates. BaseDOM does not include either runtime. See [docs/design.md](docs/design.md). Nothing in this repository is a performance claim.
-
-The tested surface is signals, lifecycle cleanup, props, events, slots, provide/inject, watchers, async resources, error boundaries, HTML templates (`x-if`, `x-for`, `x-model`, events, text), `.html` components, and the router's layout, lazy screens, and cancellable `load()`. The store, form builders, and fetch/HTML swap are still in the package and are not part of that tested surface. Known gaps are in [docs/limitations.md](docs/limitations.md).
-
-## Philosophy
-
-- **Real DOM.** `{{ count }}` sets `textContent` on the existing text node. Lists move real elements. There is no vnode tree to diff.
-- **HTML components.** `<template>`, `<script setup>`, and `<style>` in one `.html` file.
-- **Run without a build, or compile with Vite.** Inline script in fetched HTML is not executed. See [docs/sfc.md](docs/sfc.md).
-- **Small on purpose.** No runtime dependencies. Vite is a dev dependency. Do not add a virtual DOM to look more like React or Vue.
-
-## Key Features
-
-- **Signal-based Reactivity:** Fine-grained updates with `signal`, `computed`, and `effect`.
-- **Persistent State:** Signals can automatically sync with `sessionStorage`.
-- **Single-File Components:** HTML, CSS, and JS in one file with scoped styles.
-- **Nested Routing:** Powerful router with nested routes, layouts, and parameter matching.
-- **Navigation Guards:** Global and route-specific guards (`beforeEnter`, `beforeLeave`).
-- **Declarative AJAX:** HTMX-inspired fetch directives (`x-get`, `x-post`, etc.) with component rendering support.
-- **Global Store:** Feature-rich store for structured and tabular data with transaction support.
-- **Form System:** Comprehensive form management with validation, state tracking, and UI components.
-- **Lifecycle Hooks:** `onMount`, `onUnmount`, and `onUpdate` hooks for components and elements.
-
-## Getting started
-
-From this repository:
+## Create an app
 
 ```bash
-npm install
-npm test
-npm run example
+npm create basedom my-app
 ```
 
-Open `http://127.0.0.1:4173/examples/spa/` for the multi-screen app. Each screen is an `.html` file. Its script is a module beside the file (`<script setup src>`), so the browser loads it and the HTML is not evaluated. Home renders a child with a prop, an event, a slot, and injected theme. Notes is a lazy screen with `load()`. Boom shows the layout's error boundary. `examples/no-build/` is a single screen with no router.
+`npm create basedom` runs `basedom create`. The same command is `npx basedom create my-app`. Then:
+
+```bash
+cd my-app
+npm install
+npm run dev
+```
+
+That starts Vite with one counter component. The rest of this page is how you grow it into a small app: a list, filters, a route with a param, an async page, a form, and a child component. The finished version is `examples/todo`.
+
+## One component
+
+```html
+<template>
+  <p>{{ count }} <button type="button" @click="increment">Add</button></p>
+</template>
+<script setup>
+import { signal } from 'basedom';
+const [count, setCount] = signal(0);
+function increment() { setCount((value) => value + 1); }
+</script>
+```
+
+`setup` runs once. The names it declares are the template's scope. `{{ count }}` reads the signal. `@click` calls the function with the event. `:checked` and other `:attr` bindings write the DOM when the value changes.
+
+Scoped CSS applies to the component's elements and skips slotted content. A rule for the root element uses `&`, because other selectors are prefixed as descendants:
+
+```css
+& { max-width: 36rem; margin: 2rem auto; }
+header { display: flex; }
+```
+
+`x-model` on a text, checkbox, radio, select, or number control reads and writes a signal. Return both halves (`draft` and `setDraft`) from setup. An empty string is not a number; a number input stores `null` until it parses.
+
+```html
+<input x-model="draft">
+<p class="error">{{ error }}</p>
+```
 
 ```js
-import { loadComponent } from '../../sfc.js';
-import { defineRoute, startRouter } from '../../router.js';
-import { initialize } from '../../render.js';
-import { navigate } from '../../navigation.js';
+const [draft, setDraft] = signal('');
+const [error, setError] = signal('');
+function add(event) {
+  event.preventDefault();
+  if (!draft().trim()) {
+    setError('Title is required.');
+    return;
+  }
+  setError('');
+}
+```
 
-const layout = await loadComponent(new URL('./screens/layout.html', import.meta.url).href);
-const home = await loadComponent(new URL('./screens/home.html', import.meta.url).href);
-const about = await loadComponent(new URL('./screens/about.html', import.meta.url).href);
+`x-if`, `x-else`, `x-show`, and `x-for` are the control flow. A list that can reorder needs `x-key`:
+
+```html
+<li x-for="todo in visible" x-key="todo.id">{{ todo.title }}</li>
+```
+
+Shared state is a module of signals. Import it from any screen. There is no separate store.
+
+## A child component
+
+The file name is the tag. `todo-item.html` is `<todo-item>`. Import the file from the parent. You do not register it yourself.
+
+```html
+<todo-item :title="todo.title" :done="todo.done" @remove="onRemove">
+  <a x-slot="meta" :href="'/todo/' + todo.id" x-link>Open</a>
+</todo-item>
+```
+
+In the child, `defineProps` returns a getter per prop. Call it (`title()`) when the template or a later read should see updates. Calling it once stores a snapshot.
+
+```html
+<script setup>
+import { defineProps, emit } from 'basedom';
+const props = defineProps({
+  id: { required: true },
+  title: { required: true },
+  done: { default: false }
+});
+const title = props.title;
+function remove() { emit('remove', props.id()); }
+</script>
+<template>
+  <article>
+    <span>{{ title }}</span>
+    <slot name="meta"></slot>
+    <button type="button" @click="remove">Remove</button>
+  </article>
+</template>
+```
+
+`emit('remove', id)` calls the parent's `@remove` with that value. It is not a DOM event. A missing required prop warns `BD1004`.
+
+`provide(key, value)` and `inject(key)` walk the component tree. Pass a signal through if the child should see later updates. A missing key throws `BD1006` unless you pass a default.
+
+## Routes
+
+```js
+import Layout from './screens/layout.html';
+import List from './screens/list.html';
+import { defineRoute, lazy, startRouter, initialize, navigate } from 'basedom';
 
 defineRoute({
   path: '/',
-  component: layout,
+  component: Layout,
   children: [
-    { path: '', component: home },
-    { path: 'about', component: about }
+    { path: '', component: List },
+    { path: 'active', component: List },
+    { path: 'todo/:id', component: lazy(() => import('./screens/detail.html')),
+      load({ params, signal }) {
+        return fetch('/api/todos/' + params.id, { signal }).then((response) => response.json());
+      }
+    }
   ]
 });
 
 initialize('#app');
 startRouter();
-await navigate(location.pathname + location.search);
+navigate(location.pathname + location.search);
 ```
 
-The layout stays mounted. `<main x-outlet>` is the only part that changes. A screen runs once; later signal writes update the existing DOM nodes. The example uses hash URLs (`#/about`) so a static server does not have to rewrite paths. `startRouter()` without `{ mode: 'hash' }` uses normal paths when the server falls back to `index.html`.
+`navigate` returns a promise. Leave it unawaited at the top of the file. Vite's default build target rejects top-level await.
 
-To compile an inline `<script setup>` instead, use the Vite example:
+The layout keeps `x-outlet`. A child route renders there and the layout stays mounted.
 
-```bash
-npm run example:build
+```html
+<main x-boundary="This page failed." x-outlet></main>
 ```
 
-That runs `examples/vite-counter` through `vite/plugin.js`. Replacing Vite is not required for the library to run.
+Put `x-link` on anchors that should navigate in the page. Other links behave normally.
 
-Checks: `npm test` (Node's test runner and jsdom) and the Vite build above. CI runs both.
+`:id` is `props.params.id` in the screen. `load` runs before the screen mounts. The screen reads `routeData`. A newer navigation aborts `signal` and drops the old result. The outlet shows `Loading…` and, on failure, the error. An unknown path renders 404 inside the layout.
 
-## Core Concepts
+`startRouter({ mode: 'hash' })` uses the hash when the server cannot fall back to `index.html`. The default is history mode, which Vite already supports.
 
-### Reactivity
+A filter is a route param, not `location.pathname`. The address bar updates after the screen renders, so setup still sees the previous URL. `props.params.filter` is the navigation that is rendering now.
 
-BaseDOM uses a signal-based reactivity system similar to SolidJS or Preact Signals.
-
-- `signal(initial)`: Returns `[getter, setter]`.
-- `signal(key, initial)`: **Persistent Signal**. Automatically syncs with `sessionStorage`.
-- `computed(fn)`: A read-only signal that re-calcules when dependencies change.
-- `effect(fn)`: Runs a side effect and tracks dependencies.
-
-```javascript
-const [count, setCount] = signal(0);
-const [user, setUser] = signal('user_pref', { theme: 'dark' }); // Persistent
-const double = computed(() => count() * 2);
-
-effect(() => {
-  console.log('Count is:', count());
-  console.log('Doubled:', double());
-});
+```js
+{ path: 'todo/:id', component: Detail },
+{ path: '', component: List },
+{ path: ':filter', component: List }
 ```
 
-### Single-File Components (.html)
+```js
+const name = props.params.filter;
+const filter = name === 'active' ? 'Active' : name === 'done' ? 'Done' : 'All';
+```
 
-Components are `.html` files containing `<template>`, `<script>`, and `<style>`.
+Put the more specific `todo/:id` route before `:filter`, because the first match wins. Navigating remounts the list, and the todos live in the shared module, so they survive that remount.
 
-#### `<script setup>`
+## Async in a screen
 
-Fetched HTML does not run inline script. Either compile the file with the Vite plugin, or point `src` at a module in the same directory:
+`createResource(source, fetcher)` is the in-screen version of `load`. The template reads `resource.value`, `resource.loading`, and `resource.error`. The fetcher receives `{ signal }`. A new source aborts the previous request.
+
+`watch(source, (next, prev, onCleanup) => {}, { immediate })` reruns when the source changes and runs the previous cleanup first.
+
+`x-boundary` catches errors thrown while rendering, and errors thrown by effects. It does not catch event handlers or timers.
+
+## Dev and build
+
+`npm run dev` preserves `signal()` values across edits when you did not add, remove, or rename one. Template and style edits do not rerun setup. A script syntax error is `BD1021` on the Vite overlay. The next good save applies it.
+
+`npm run build` writes the production assets and `basedom-graph.json`. Dev serves the same graph at `/__basedom/graph`.
+
+## Without Vite
+
+Inline `<script>` inside fetched HTML is not executed. Point at a module next to the file:
 
 ```html
 <script setup src="./counter.setup.js"></script>
 ```
 
 ```js
-import { signal } from '../../../state.js';
-
-export default function setup() {
-  const [name, setName] = signal('World');
-  function greet() { /* use name() */ }
-  return { name, greet };
-}
+import { loadComponent, mount } from 'basedom';
+const Counter = await loadComponent(new URL('./Counter.html', import.meta.url).href);
+mount(Counter, '#app');
 ```
 
-The template calls `greet` and reads `name`. Assignment in a template (`count = count + 1`) writes through the signal's `.set`. Details and the server-template rules are in [docs/sfc.md](docs/sfc.md).
+`src` must be a same-origin path inside that component's directory.
 
-### Component Composition
+## More
 
-Nest components declaratively by using their registered tag names. Data flows down via **props** and up via **events**.
-
-#### Passing Props
-Use the `:` prefix to bind reactive data or JavaScript expressions to props.
-
-```html
-<!-- Parent.html -->
-<template>
-  <UserCard :user="currentUser" :theme="'dark'" />
-</template>
-```
-
-#### Handling Events
-Use the `@` prefix (or `x-on:`) to listen for custom events or standard DOM events emitted by child components.
-
-```html
-<!-- Parent.html -->
-<template>
-  <Counter @update="handleUpdate" @reset="count = 0" />
-</template>
-```
-
-### Slots & Scoped Slots
-
-BaseDOM supports powerful slot composition.
-
-**Child Component (`Card.html`):**
-```html
-<template>
-  <div class="card">
-    <header><slot name="header">Default Header</slot></header>
-    <section><slot :item="internalData">Default Content</slot></section>
-  </div>
-</template>
-```
-
-**Parent Usage:**
-```html
-<template>
-  <Card>
-    <h1 x-slot="header">Custom Title</h1>
-    <!-- Scoped Slot: 'item' is passed from Card.html -->
-    <p x-slot="default" :item="data">{{ data.description }}</p>
-  </Card>
-</template>
-```
-
-## Template Directives
-
-BaseDOM provides a rich set of directives for declarative DOM manipulation.
-
-| Directive | Description | Example |
-|-----------|-------------|---------|
-| `x-if` | Conditional rendering. | `<div x-if="isVisible">Shown</div>` |
-| `x-else` | Paired with `x-if` for alternative rendering. | `<div x-else>Hidden</div>` |
-| `x-for` | List rendering with `item in items` syntax. | `<li x-for="item in list">{{ item }}</li>` |
-| `x-on:[event]` | Event listener. Alias: `@[event]`. | `<button @click="doWork">` |
-| `x-bind:[attr]` | Attribute binding. Alias: `:[attr]`. | `<img :src="avatarUrl">` |
-| `x-model` | Two-way binding for inputs, selects, etc. | `<input x-model="name">` |
-| `x-show` | Toggle visibility using `display: none`. | `<div x-show="isOpen">` |
-| `x-ref` | Assign element to a variable in context. | `<canvas x-ref="canvas">` |
-| `x-mount` | Lifecycle hook: called when mounted. | `<div x-mount="init">` |
-| `x-unmount` | Lifecycle hook: called when unmounted. | `<div x-unmount="cleanup">` |
-| `x-update` | Lifecycle hook: called when updated. | `<div x-update="refresh">` |
-| `slot` | Define a placeholder for content. | `<slot name="title">` |
-| `x-slot` | Provide content for a named slot. | `<div x-slot="title">` |
-| `x-get` | AJAX: Perform a GET request. | `<button x-get="/api/data">` |
-| `x-post` | AJAX: Perform a POST request. | `<form x-post="/api/save">` |
-| `x-put` | AJAX: Perform a PUT request. | `<button x-put="/api/update">` |
-| `x-patch` | AJAX: Perform a PATCH request. | `<button x-patch="/api/edit">` |
-| `x-delete` | AJAX: Perform a DELETE request. | `<button x-delete="/api/del">` |
-| `x-link` | Opt-in to SPA navigation for an anchor tag. | `<a href="/about" x-link>` |
-
-## Routing
-
-BaseDOM includes a full-featured SPA router with nested layouts and guards.
-
-```javascript
-import { defineRoute, navigate } from './basedom/router.js';
-
-defineRoute({
-  path: '/dashboard',
-  component: './layouts/Dashboard.html',
-  meta: { title: 'Dashboard' },
-  children: [
-    { 
-      path: 'users/:id', 
-      component: './pages/UserDetail.html',
-      guards: {
-        beforeEnter: async (to) => {
-          if (!hasAccess(to.params.id)) return '/403';
-        }
-      }
-    }
-  ],
-  scrollBehavior: () => ({ top: 0, behavior: 'smooth' })
-});
-
-// Programmatic navigation
-navigate('/dashboard/users/123');
-```
-
-## Declarative AJAX (Fetch)
-
-This block describes the fetch helpers that ship in the package. They are not covered by the regression tests in 0.4.0, and swapping HTML with `innerHTML` is a trusted-HTML path, not the SFC sandbox.
-
-HTMX-inspired AJAX directly in your HTML.
-
-```html
-<div x-inherit="x-headers x-indicator">
-    <button x-post="/api/save" 
-            x-params='{"id": 1}' 
-            x-encoding="json"
-            x-target="#status"
-            x-indicator=".spinner"
-            x-headers='{"Authorization": "Bearer token"}'>
-        Save Changes
-    </button>
-    <span class="spinner x-requesting:show">Saving...</span>
-    <div id="status"></div>
-</div>
-```
-
-### AJAX Deep-Dive
-
-BaseDOM's fetch system allows you to build complex, interactive UIs with minimal JavaScript.
-
-#### Fetch Attributes
-
-| Attribute | Description |
-|-----------|-------------|
-| `x-get`, `x-post`, `x-put`, `x-patch`, `x-delete` | The URL to fetch from using the specified method. |
-| `x-target` | The element to swap the response into (e.g., `#id`, `.class`, or `this`). |
-| `x-trigger` | The event that triggers the fetch (default: `click` or `submit`). |
-| `x-indicator` | Selector for elements that get the `x-requesting` class during fetch. |
-| `x-swap` | The swap strategy and modifiers (e.g., `innerHTML swap:1s`). |
-| `x-headers` | JSON or `Key: Value` pairs to send as request headers. |
-| `x-params` | Data to send with the request (JSON or URL-encoded). |
-| `x-include` | Additional elements to include in the request body. |
-| `x-vals` | Extra values to add to the request (evaluated expression). |
-| `x-encoding` | Set to `json` to send data as a JSON body. |
-| `x-confirm` | A confirmation message to show before fetching. |
-| `x-timeout` | Request timeout in milliseconds. |
-| `x-push-url` | Update the browser's address bar with the response URL. |
-| `x-replace-url` | Replace the browser's address bar with the response URL. |
-| `x-select` | Narrow the response to a specific selector before swapping. |
-| `x-select-oob` | Swap specific elements from the response out-of-band. |
-| `x-swap-oob` | Mark an element in a response for out-of-band swapping. |
-| `x-inherit` | List of attributes to inherit from parent elements (or `*`). |
-| `x-disinherit` | List of attributes to stop inheriting from parents (or `*`). |
-| `x-boost` | Boost anchor tags and forms to use AJAX automatically. |
-
-#### Swap Strategies
-
-The `x-swap` attribute controls how the response is inserted into the DOM.
-
-- `innerHTML` (Default): Replace the contents of the target.
-- `outerHTML`: Replace the target element itself.
-- `textContent`: Replace contents with raw text.
-- `beforebegin`: Insert before the target element.
-- `afterbegin`: Insert inside the target, before the first child.
-- `beforeend`: Insert inside the target, after the last child.
-- `afterend`: Insert after the target element.
-- `delete`: Remove the target element regardless of the response.
-- `none`: Do not perform a swap.
-
-#### Swap Modifiers
-
-Append these to `x-swap` for fine-grained control:
-
-- `swap:[time]`: Delay the swap (e.g., `swap:500ms`).
-- `settle:[time]`: Delay after the swap before finishing (e.g., `settle:100ms`).
-- `transition:true`: Use the **View Transitions API** for the swap.
-- `scroll:[top|bottom|selector:top]`: Scroll the window or an element after swapping.
-- `show:[top|bottom|selector:top]`: Scroll an element into view after swapping.
-- `focus-scroll:true`: Maintain scroll position of the focused element.
-
-#### Best Practices & Inheritance
-
-- **Use `x-inherit`**: Define common headers or indicators on a parent container.
-- **Indicators**: Use the `x-requesting` class (automatically added to `x-indicator` targets) to show loading spinners.
-- **OOB Swaps**: Use `x-swap-oob="true"` on elements in your server response to update multiple parts of the page in a single request.
-
-## Global Store
-
-A robust central state management system for tabular or keyed data.
-
-```javascript
-import { createStore } from './basedom/store.js';
-
-const store = createStore({
-  values: { theme: 'light' },
-  tables: { tasks: {} }
-});
-
-// Transactions batch multiple updates for efficiency
-store.transaction(() => {
-  store.setValue('theme', 'dark');
-  store.setRow('tasks', 't1', { title: 'Fix Bug', done: false });
-});
-
-// Fine-grained listeners
-store.addCellListener('tasks', 't1', 'done', (val) => {
-  console.log('Task t1 status:', val);
-});
-```
-
-### Advanced Store Features
-
-- **Schemas**: Enforce types and default values for keyed data and tables.
-- **Transactions**: Batch multiple updates to trigger listeners only once.
-- **JSON Serialization**: Easily sync store state with `localStorage` or server APIs.
-- **Computed Subsets**: Use `getSortedRowIds` to create reactive, sorted views of your data.
-
-## Form Handling
-
-The supported form path is native controls in an HTML screen: `x-model` on text, checkbox, radio, select, and number inputs, with the screen's own submit function. See `examples/spa/screens/contact.html`. `createForm` stores field values and runs validators. The `Form`, `Field`, and `Submit` element builders are experimental: they are not covered as a stable API.
-
-```html
-<template>
-  <div x-mount="setupForm">
-    <div id="form-container"></div>
-  </div>
-</template>
-
-<script setup>
-import { Form, Field, Submit } from './basedom/form.js';
-import { required, email } from './basedom/validation.js';
-import { renderComponent } from './basedom/components.js';
-
-const setupForm = (el) => {
-  const myForm = Form({
-    initialValues: { username: '', email: '' },
-    validators: {
-      username: [required('Username is required')],
-      email: [required(), email('Invalid email address')]
-    },
-    onSubmit: async (values) => {
-      console.log('Form submitted:', values);
-    },
-    children: [
-      Field({ label: 'Username', name: 'username' }),
-      Field({ label: 'Email', name: 'email', type: 'email' }),
-      Submit('Register', { loadingText: 'Creating Account...' })
-    ]
-  });
-  renderComponent(myForm, el.querySelector('#form-container'));
-};
-</script>
-```
-
-## Lifecycle Hooks
-
-Hooks can be defined in scripts or directly on elements.
-
-```html
-<script setup>
-import { onMount, onUnmount } from '../basedom/lifecycle.js';
-
-onMount((el) => {
-    const timer = setInterval(() => console.log('Tick'), 1000);
-    onUnmount(() => clearInterval(timer));
-});
-</script>
-
-<!-- Directive usage -->
-<div x-mount="initChart" x-unmount="destroyChart"></div>
-```
-
-## API Reference
-
-For the loading rules, see [docs/sfc.md](docs/sfc.md). For what is not done, see [docs/limitations.md](docs/limitations.md) and [docs/roadmap.md](docs/roadmap.md).
-
-## Contributing
-
-BaseDOM is an open-source project. Feel free to open issues or submit pull requests.
-https://github.com/Named666/BaseDOM
-
-## License
-
-MIT
+[docs/sfc.md](docs/sfc.md) is the component reference. [docs/limitations.md](docs/limitations.md) is what this version does not do. Expressions are a subset of JavaScript: property access, calls, `+`, comparisons, `&&`, `||`, `? :`, and assignment to a signal. There is no `eval`.

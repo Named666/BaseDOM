@@ -23,6 +23,7 @@ const [count, setCount] = signal(2);
     assert.doesNotMatch(code, /new Function/);
     assert.doesNotMatch(code, /data:text\/javascript/);
     assert.match(code, /defineSfc/);
+    assert.doesNotMatch(code, /registerComponent/);
 
     const dir = await mkdtemp(path.join(tmpdir(), 'basedom-sfc-'));
     const file = path.join(dir, 'counter.js');
@@ -38,5 +39,25 @@ const [count, setCount] = signal(2);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it('lets setup declare props without colliding with the setup argument', () => {
+    const code = compileSfcToModule(`<template><p>{{ title }}</p></template>
+<script setup>
+import { defineProps } from 'basedom';
+const props = defineProps({ title: { default: 'Ada' } });
+const title = props.title;
+</script>`, 'card.html', { runtimeSpecifier: 'basedom/sfc.js', hmr: false });
+    assert.match(code, /function __setup\(__props\)/);
+    assert.match(code, /const props = defineProps/);
+  });
+
+  it('registers an imported .html file under its file name', () => {
+    const code = compileSfcToModule(`<template><todo-item></todo-item></template>
+<script setup>
+import '../components/todo-item.html';
+</script>`, 'list.html', { runtimeSpecifier: 'basedom/sfc.js', hmr: false });
+    assert.match(code, /import \{ registerComponent \} from "basedom\/registry.js"/);
+    assert.match(code, /registerComponent\("todo-item", __bdView0\)/);
   });
 });

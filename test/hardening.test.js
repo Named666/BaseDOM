@@ -4,7 +4,6 @@ import { signal } from '../state.js';
 import { defineSfc } from '../sfc.js';
 import { mount } from '../components.js';
 import { setStyleNonce } from '../components.js';
-import { createForm } from '../form.js';
 import { onMount, onCleanup, callOnUnmountRecursive } from '../lifecycle.js';
 import { shouldInterceptLink } from '../navigation.js';
 import { evaluateExpression } from '../expression.js';
@@ -84,31 +83,6 @@ describe('native x-model', () => {
     assert.equal(host.querySelector('input'), second);
     assert.equal(document.activeElement, second);
     host.remove();
-  });
-});
-
-describe('createForm', () => {
-  it('reads and writes fields, validates, and reports a rejected submit', async () => {
-    const form = createForm({ email: '' });
-    form.setValidator('email', [
-      (value) => value ? null : 'Email is required',
-      (value) => value.includes('@') ? null : 'Invalid email'
-    ]);
-    assert.equal(form.isValid(), false);
-    assert.equal(form.errors().email, 'Email is required');
-    form.fields.email('ada');
-    assert.equal(form.fields.email(), 'ada');
-    assert.equal(form.errors().email, 'Invalid email');
-    form.fields.email('ada@example.com');
-    assert.equal(form.isValid(), true);
-    let submitted = null;
-    await form.handleSubmit(async (values) => { submitted = values; throw new Error('nope'); })({ preventDefault() {} });
-    assert.deepEqual(submitted, { email: 'ada@example.com' });
-    assert.equal(form.submitError(), 'nope');
-    assert.equal(form.isSubmitting(), false);
-    form.reset();
-    assert.equal(form.fields.email(), '');
-    form.dispose();
   });
 });
 
