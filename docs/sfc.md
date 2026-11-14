@@ -83,11 +83,22 @@ import { basedom } from 'basedom/vite';
 export default { plugins: [basedom()] };
 ```
 
-The plugin accepts its own module. A template edit replaces the mounted element and keeps the page from doing a full reload. Setup runs again, so signal state inside that component is not copied across the update. If the new module cannot be applied, the plugin calls `import.meta.hot.invalidate()` and Vite reloads the page.
+The plugin accepts its own module. What an edit does depends on what changed:
 
-`vite build` writes `basedom-graph.json` next to the bundle. It lists each compiled SFC's bindings, `defineProps` keys, `emit` names, slots, `x-model` targets, and attribute bindings. Routes are included when a JavaScript module calls `defineRoute` and the path strings are visible as literals. That scan is not a full JavaScript parser.
+- **Template only.** Setup does not run again. The new template is rendered with the same signals, then the element is swapped in place. Effects that belonged to the previous render are disposed.
+- **Style only.** The scoped `<style>` for that component is rewritten. The class already on the elements stays, so setup does not run.
+- **Script, or an imported module.** Setup runs again. `signal()` calls are matched by declaration order and name. Values are copied onto the new signals when that list is unchanged. If a signal was added, removed, or renamed, the instance remounts from its initializers and the console shows `BD1020`.
+- **Every mounted instance** of that component is updated, including ones nested inside another component, `x-for`, `x-if`, a slot, a route outlet, or a lazy screen.
+- **A syntax error** in `<script setup>` fails the transform with `BD1021`. Vite shows its overlay. The previous page stays up. The next good save applies as an HMR update.
+- **A route module** that calls `defineRoute(` is re-registered on save and the current route renders again. Keep the route table in one module. That re-render creates new screen instances, so it does not preserve screen state the way an SFC edit does.
 
-Compile and runtime failures use stable codes (`BD1001` expression, `BD1003` x-model, `BD1004` missing prop, `BD1006` missing inject, `BD1007` boundary, `BD1010` route load, `BD1011` lazy screen, `BD1015` compile, `BD1016` inline script). The message includes the file, the expression, and a fix hint when those are known.
+Production builds omit the HMR runtime. `import.meta.hot` blocks are not in the emitted bundle.
+
+`vite build` writes `basedom-graph.json`. In dev the same graph is at `/__basedom/graph` and the virtual module `virtual:basedom-graph`, and it updates when a file changes. The script is parsed with Rollup's parser. The template is scanned with locations. Entries include imports, props (`required` and `default`), emits, slots and scoped slot params, `provide` / `inject` keys, `createResource` calls, and routes. A route path or component that is not a literal is kept and marked `unresolved` instead of being dropped. Each record has `file`, `line`, and `column`. The shape is `schema/basedom-graph.schema.json`.
+
+The plugin warns on `BD1030` (listener for an emit the child never sends), `BD1031` (prop passed to a component that does not declare it), `BD1032` (`inject` with no ancestor `provide` on any route path), `BD1033` (route file missing), `BD1034` (component not reachable from a route), and `BD1035` (route path or component is not static).
+
+Compile and runtime failures use stable codes (`BD1001` expression, `BD1003` x-model, `BD1004` missing prop, `BD1006` missing inject, `BD1007` boundary, `BD1010` route load, `BD1011` lazy screen, `BD1015` compile, `BD1016` inline script, `BD1020` HMR shape change, `BD1021` script syntax). The message includes the file, the expression, and a fix hint when those are known.
 
 See `examples/vite-counter`. Check it with:
 

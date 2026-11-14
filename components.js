@@ -146,18 +146,8 @@ function isSignalLike(value) {
  * @param {string} styles - The CSS styles string.
  * @param {HTMLElement} element - The element to apply styles to.
  */
-export function handleScopedStyles(styles, element) {
-  if (!styles || typeof styles !== 'string' || !styles.trim()) return;
-
-  const styleHash = hashString(styles);
-  if (injectedStyles.has(styleHash)) {
-    element.classList.add(styleHash);
-    applyStyleNonce(injectedStyles.get(styleHash));
-    return;
-  }
-
-  // Prefix selectors and keyframes
-  function prefixSelectors(css, className) {
+export function scopeCss(css, className) {
+  function prefixSelectors(input, scopeClass) {
     // Scope @keyframes names
     const keyframesRegex = /@(?:-webkit-|-moz-|-o-)?keyframes\s+([a-zA-Z0-9_-]+)/g;
     const keyframesNames = [];
@@ -204,13 +194,46 @@ export function handleScopedStyles(styles, element) {
     });
     return css;
   }
-  const scopedCSS = prefixSelectors(styles, styleHash);
+  return prefixSelectors(css, className);
+}
+
+export function handleScopedStyles(styles, element) {
+  if (!styles || typeof styles !== 'string' || !styles.trim()) return;
+
+  const styleHash = hashString(styles);
+  if (injectedStyles.has(styleHash)) {
+    element.classList.add(styleHash);
+    applyStyleNonce(injectedStyles.get(styleHash));
+    return;
+  }
+
+  const scopedCSS = scopeCss(styles, styleHash);
   const styleTag = document.createElement('style');
   styleTag.textContent = scopedCSS;
   applyStyleNonce(styleTag);
   document.head.appendChild(styleTag);
   injectedStyles.set(styleHash, styleTag);
   element.classList.add(styleHash);
+}
+
+/**
+ * Rewrites an already-injected scoped style sheet, keeping the class that is
+ * already on mounted elements. Used by dev HMR. Production builds do not call it.
+ * @param {string} className
+ * @param {string} styles
+ */
+export function retargetScopedStyle(className, styles) {
+  if (!className || !styles) return;
+  const css = scopeCss(styles, className);
+  let tag = injectedStyles.get(className);
+  if (!tag) {
+    tag = document.createElement('style');
+    tag.setAttribute('data-basedom-style', className);
+    document.head.appendChild(tag);
+    injectedStyles.set(className, tag);
+  }
+  tag.textContent = css;
+  applyStyleNonce(tag);
 }
 
 /**

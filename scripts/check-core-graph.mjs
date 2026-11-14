@@ -14,6 +14,8 @@ const result = await esbuild.build({
 });
 
 const inputs = Object.keys(result.metafile.inputs);
-const forbidden = inputs.filter((file) => /(?:^|\/)(router|navigation|fetch|fetch-directives|store|form)\.js$/.test(file));
+const forbidden = inputs.filter((file) => /(?:^|\/)(router|navigation|fetch|fetch-directives|store|form|graph|hmr-runtime)\.js$/.test(file));
 assert.deepEqual(forbidden, [], `screen runtime imported optional modules:\n${forbidden.join('\n')}`);
+const devOnly = inputs.filter((file) => /rollup|hmr-runtime|graph\.js/.test(file));
+assert.deepEqual(devOnly, [], `screen runtime imported dev-only modules:\n${devOnly.join('\n')}`);
 console.log(`core graph ok (${inputs.length} modules)`);

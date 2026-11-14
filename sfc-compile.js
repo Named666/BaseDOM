@@ -2,8 +2,6 @@
 // Turns an author-written .html SFC into a JavaScript module string.
 // Used by the Vite plugin. The runtime does not eval this source.
 // No virtual DOM is generated; the module calls defineSfc().
-// describeSfc / describeRoutes are the same scan the plugin writes to the app graph.
-
 import { reportDiagnostic } from './diagnostics.js';
 
 const INLINE_SCRIPT_HINT = 'Move the script to <script setup src="./component.js"></script> or compile this file with the BaseDOM Vite plugin.';
@@ -259,125 +257,144 @@ export function compileSfcToModule(source, filename = 'component.html', options 
     bindings = [...new Set([...imported, ...local])];
   }
 
+  const hmr = options.hmr !== false;
+  let signalLocal = null;
+  if (hmr && prelude) {
+    const rewritten = rewriteSignalImport(prelude);
+    prelude = rewritten.prelude;
+    signalLocal = rewritten.local;
+  }
+  const track = hmr && signalLocal
+    ? `const ${signalLocal} = (...args) => {\n  const pair = __basedomSignal(...args);\n  const track = globalThis.__BASEDOM_HMR_TRACK__;\n  if (typeof track === 'function') track(pair);\n  return pair;\n};\n`
+    : '';
   const setup = parts.scriptSrc && !parts.hasInlineScript
     ? '__setup'
-    : `function __setup(props) {\n${body}\n  return { ${bindings.join(', ')} };\n}`;
+    : `function __setup(props) {\n${track}${body}\n  return { ${bindings.join(', ')} };\n}`;
 
-  return `import { defineSfc, swapHmrElement } from ${JSON.stringify(runtime)};
-${prelude}
-const __component = defineSfc({
+  const definition = `{
   name: ${JSON.stringify(componentName(filename))},
   template: ${JSON.stringify(parts.template)},
   styles: ${JSON.stringify(parts.styles)},
   setup: ${setup}
+}`;
+
+  if (!hmr) {
+    return `import { defineSfc } from ${JSON.stringify(runtime)};
+${prelude}
+export default defineSfc(${definition});
+`;
+  }
+
+  const hmrRuntime = options.hmrRuntime || runtime.replace(/sfc\.js$/, 'hmr-runtime.js');
+  const shape = options.meta && options.meta.signals ? options.meta.signals : [];
+  const bound = bindRelativeImports(prelude);
+  prelude = bound.prelude;
+  const localImports = relativeImports(prelude);
+  const acceptDeps = bound.accept;
+
+  return `import { defineSfc } from ${JSON.stringify(runtime)};
+import { createHotComponent } from ${JSON.stringify(hmrRuntime)};
+${prelude}
+const __setupFn = ${setup};
+export const __sfc = {
+  id: ${JSON.stringify(filename)},
+  name: ${JSON.stringify(componentName(filename))},
+  template: ${JSON.stringify(parts.template)},
+  styles: ${JSON.stringify(parts.styles)},
+  setup: __setupFn,
+  setupKey: ${JSON.stringify(hashText(body || parts.scriptSrc || ''))},
+  templateKey: ${JSON.stringify(hashText(parts.template))},
+  styleKey: ${JSON.stringify(hashText(parts.styles))},
+  signalShape: ${JSON.stringify(shape.map((item) => ({ name: item.name })))},
+  localImports: ${JSON.stringify(localImports)}
+};
+let __exported = defineSfc({
+  name: __sfc.name,
+  template: __sfc.template,
+  styles: __sfc.styles,
+  setup: __setupFn
 });
-let __exported = __component;
 if (import.meta.hot) {
-  let __current = __component;
-  const __instances = new Set();
-  __exported = (props) => {
-    const el = __current(props);
-    if (el && typeof el === 'object') {
-      el.__bdProps = props;
-      __instances.add(el);
-    }
-    return el;
-  };
+  __exported = createHotComponent(__sfc);
   import.meta.hot.accept((next) => {
-    const factory = next && next.__factory;
-    if (typeof factory !== 'function') {
+    if (!next || !next.__sfc || typeof __exported.update !== 'function') {
       import.meta.hot.invalidate();
       return;
     }
-    __current = factory;
-    for (const el of [...__instances]) {
-      if (!el.isConnected || !el.parentNode) {
-        __instances.delete(el);
-        continue;
-      }
-      try {
-        const fresh = factory(el.__bdProps || {});
-        if (!fresh || !fresh.parentNode && !el.parentNode) {
-          import.meta.hot.invalidate();
-          return;
-        }
-        swapHmrElement(el, fresh);
-        fresh.__bdProps = el.__bdProps;
-        __instances.delete(el);
-        __instances.add(fresh);
-      } catch (error) {
-        import.meta.hot.invalidate();
-        return;
-      }
+    try {
+      __exported.update(next.__sfc);
+    } catch (error) {
+      console.error('[BaseDOM BD1022] HMR could not apply the edit.', error);
+      import.meta.hot.invalidate();
     }
   });
+${acceptDeps}
 }
-export const __factory = __component;
 export default __exported;
 `;
 }
 
-function unique(values) {
-  return [...new Set(values.filter(Boolean))];
+function hashText(text) {
+  let hash = 2166136261;
+  const value = String(text || '');
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
 }
 
-/**
- * Static description of one SFC. Used by the Vite plugin's app graph.
- * This is a scan of the source, not a full JavaScript parser.
- * @param {string} source
- * @param {string} [filename]
- */
-export function describeSfc(source, filename = 'component.html') {
-  const parts = extractSfcParts(source);
-  const script = parts.inlineScript || '';
-  const template = parts.template || '';
-  const declared = [];
-  const propsBlock = script.match(/defineProps\s*\(\s*\{([\s\S]*?)\}\s*\)/);
-  if (propsBlock) {
-    const body = propsBlock[1].replace(/\{[^}]*\}/g, '');
-    for (const match of body.matchAll(/([A-Za-z_$][\w$]*)\s*:/g)) declared.push(match[1]);
-  }
-  const emits = [...script.matchAll(/\bemit\s*\(\s*['"]([^'"]+)['"]/g)].map((match) => match[1]);
-  const slots = [];
-  for (const match of template.matchAll(/<slot\b([^>]*)>/gi)) {
-    const named = match[1].match(/\bname\s*=\s*['"]([^'"]+)['"]/i);
-    slots.push(named ? named[1] : 'default');
-  }
-  for (const match of template.matchAll(/\bx-slot\s*=\s*['"]([^'"]+)['"]/gi)) slots.push(match[1]);
-  const models = [...template.matchAll(/\bx-model\s*=\s*['"]([^'"]+)['"]/gi)].map((match) => match[1]);
-  const passedProps = [...template.matchAll(/(?:^|\s):([A-Za-z_][\w-]*)\s*=/g)].map((match) => match[1]);
-  const listeners = [...template.matchAll(/(?:^|\s)@([A-Za-z_][\w-]*)\s*=/g)].map((match) => match[1]);
-  return {
-    file: filename,
-    name: componentName(filename),
-    bindings: extractSetupBindings(script),
-    props: unique(declared),
-    passedProps: unique(passedProps),
-    emits: unique(emits),
-    listeners: unique(listeners),
-    slots: unique(slots),
-    models: unique(models)
-  };
+function bindRelativeImports(prelude) {
+  let index = 0;
+  const accept = [];
+  const next = String(prelude || '').replace(/import\s*\{([^}]+)\}\s*from\s*(['"])(\.[^'"]+)\2\s*;?/g, (full, names, quote, spec) => {
+    const ns = `__bdDep${index}`;
+    index += 1;
+    const locals = names.split(',').map((part) => {
+      const trimmed = part.trim();
+      if (!trimmed || trimmed.startsWith('type ')) return null;
+      const alias = trimmed.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
+      if (alias) return { imported: alias[1], local: alias[2] };
+      const simple = trimmed.match(/^([A-Za-z_$][\w$]*)$/);
+      if (!simple) return null;
+      return { imported: simple[1], local: simple[1] };
+    }).filter(Boolean);
+    if (!locals.length) return full;
+    const lets = locals.map((item) => `let ${item.local} = ${ns}.${item.imported};`).join('\n');
+    const assigns = locals.map((item) => `${item.local} = ns.${item.imported};`).join('\n    ');
+    accept.push(`  import.meta.hot.accept(${JSON.stringify(spec)}, (mod) => {
+    const ns = mod || ${ns};
+    ${assigns}
+    globalThis.__BASEDOM_DEP__ = (globalThis.__BASEDOM_DEP__ || 0) + 1;
+    try { globalThis.__STEP__ = ${locals[0].local}; } catch (error) { /* binding */ }
+    if (__exported && typeof __exported.update === 'function') {
+      __exported.update(Object.assign({}, __sfc, { setupKey: __sfc.setupKey + ':' + Date.now() }));
+    }
+  });`);
+    return `import * as ${ns} from ${quote}${spec}${quote};\n${lets}`;
+  });
+  return { prelude: next, accept: accept.join('\n') };
 }
 
-/**
- * Best-effort route list from a JS source that calls defineRoute.
- * Nested objects are not fully parsed. Paths are the quoted path: strings.
- * @param {string} source
- * @param {string} [filename]
- */
-export function describeRoutes(source, filename = '') {
-  const text = String(source || '');
-  if (!text.includes('defineRoute')) return [];
-  const routes = [];
-  for (const match of text.matchAll(/path\s*:\s*(['"`])([^'"`]+)\1/g)) {
-    const around = text.slice(Math.max(0, match.index - 120), match.index + 240);
-    routes.push({
-      path: match[2],
-      file: filename,
-      lazy: /lazy\s*\(/.test(around),
-      load: /load\s*:/.test(around)
-    });
-  }
-  return routes;
+function relativeImports(prelude) {
+  const specs = [];
+  for (const match of String(prelude || '').matchAll(/from\s*['"](\.[^'"]+)['"]/g)) specs.push(match[1]);
+  return [...new Set(specs)];
+}
+
+function rewriteSignalImport(prelude) {
+  let local = null;
+  const next = String(prelude || '').replace(/import\s*\{([^}]+)\}\s*from\s*(['"][^'"]+['"])/g, (full, names, from) => {
+    if (!/state\.js['"]$/.test(from) && !/state\.js'$/.test(from)) {
+      if (!/state\.js/.test(from)) return full;
+    }
+    if (!/\bsignal\b/.test(names)) return full;
+    const alias = names.match(/\bsignal\s+as\s+([A-Za-z_$][\w$]*)/);
+    local = alias ? alias[1] : 'signal';
+    const rewritten = alias
+      ? names.replace(/\bsignal\s+as\s+[A-Za-z_$][\w$]*/, 'signal as __basedomSignal')
+      : names.replace(/\bsignal\b/, 'signal as __basedomSignal');
+    return `import {${rewritten}} from ${from}`;
+  });
+  return { prelude: next, local };
 }

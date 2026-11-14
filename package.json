@@ -31,6 +31,9 @@
     "resource.js",
     "sfc.js",
     "sfc-compile.js",
+    "hmr-runtime.js",
+    "graph.js",
+    "schema/basedom-graph.schema.json",
     "vite/plugin.js",
     "index.d.ts",
     "docs",
@@ -54,7 +57,7 @@
   "scripts": {
     "test": "node --import ./test/register-dom.js --test test/*.test.js",
     "test:types": "tsc -p tsconfig.json",
-    "test:graph": "node scripts/check-core-graph.mjs",
+    "test:graph": "node scripts/check-core-graph.mjs && node --test test/graph.test.js",
     "test:browser": "node test/browser-spa.mjs",
     "example": "node scripts/serve-example.js",
     "example:build": "vite build --config examples/vite-counter/vite.config.js"

@@ -19,7 +19,7 @@ const [count, setCount] = signal(2);
     const code = compileSfcToModule(source, 'Counter.html', {
       runtimeSpecifier: new URL('../sfc.js', import.meta.url).href
     });
-    assert.match(code, /import \{ signal \}/);
+    assert.match(code, /import \{ signal as __basedomSignal \}/);
     assert.doesNotMatch(code, /new Function/);
     assert.doesNotMatch(code, /data:text\/javascript/);
     assert.match(code, /defineSfc/);

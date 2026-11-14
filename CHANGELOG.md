@@ -15,8 +15,9 @@
 
 ### Tooling
 
-- The Vite plugin accepts `.html` SFC updates and swaps the mounted element. Setup state is not copied. A failed swap reloads the page.
-- `vite build` writes `basedom-graph.json` from the same compiler scan: screens, props, emits, slots, `x-model` targets, and literal route paths.
+- Vite HMR for `.html` SFCs keeps `signal()` values when the declaration list is unchanged. Template-only and style-only edits do not rerun setup. Every mounted instance updates. A changed signal list remounts and logs `BD1020`. A script syntax error is `BD1021` on Vite's overlay; the next good save applies without a full reload. An imported module re-runs setup with the previous signal values. A `defineRoute` module re-registers its routes.
+- The app graph is parsed with Rollup's parser and a template scanner. It records imports, props, emits, slots, provide/inject, resources, and routes, including nested, lazy, and non-literal ones, with file:line:column. Dev serves `/__basedom/graph`. Builds write `basedom-graph.json`. `schema/basedom-graph.schema.json` checks the shape. Lint warnings use `BD1030`–`BD1035`.
+- HMR and the graph parser are not included in production bundles.
 - Template and runtime failures use `BD1xxx` codes with a file, expression, and fix hint when known.
 
 ### Breaking

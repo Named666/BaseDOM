@@ -226,7 +226,11 @@ export const xForDirective = {
             runWithOwner(owner, () => {
                 el = realizeRow(parseNode(nodeClone.cloneNode(true), loopContext));
             });
-            return { el, setItem, setIndex, dispose: () => disposeOwner(owner) };
+            const row = { el, setItem, setIndex, dispose: () => disposeOwner(owner) };
+            // Dev-only link so an HMR swap can retarget the live row. Production
+            // builds drop this branch because import.meta.hot is false.
+            if (import.meta.hot && el) el.__basedomForRow = row;
+            return row;
         }
 
         return fragment;
