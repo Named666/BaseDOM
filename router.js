@@ -50,6 +50,7 @@ function defineRoute(config, componentFn, guards = {}, isChild = false, inherite
     path: finalPath,
     regex,
     componentFn: component,
+    load: typeof routeConfig.load === 'function' ? routeConfig.load : undefined,
     paramNames,
     guards: routeConfig.guards || {},
     meta: combinedMeta,
@@ -64,6 +65,21 @@ function defineRoute(config, componentFn, guards = {}, isChild = false, inherite
   return routeObject;
 }
 export { defineRoute };
+
+/**
+ * Marks a route component as a loader.
+ * `component: lazy(() => loadComponent(url))` or `lazy(() => import('./screen.js'))`.
+ * A plain function is still the screen itself and is not called during loading.
+ * @param {() => Promise<*>} loader
+ */
+export function lazy(loader) {
+  function LazyScreen() {
+    throw new Error('[BaseDOM BD1011] Lazy screen was rendered before it finished loading. Fix: pass the component through lazy() on the route and let the router resolve it.');
+  }
+  LazyScreen.__basedomLazy = true;
+  LazyScreen.load = loader;
+  return LazyScreen;
+}
 
 /**
  * Recursively matches a path against nested routes.

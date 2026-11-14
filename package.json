@@ -1,7 +1,7 @@
 {
   "name": "basedom",
   "author": "named666",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Small reactive UI library. Real DOM updates, no virtual DOM, no runtime dependencies.",
   "main": "./index.js",
   "type": "module",
@@ -26,6 +26,9 @@
     "validation.js",
     "paths.js",
     "dev.js",
+    "diagnostics.js",
+    "context.js",
+    "resource.js",
     "sfc.js",
     "sfc-compile.js",
     "vite/plugin.js",

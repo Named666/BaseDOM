@@ -21,9 +21,29 @@ p { font-weight: 600; }
 
 `setup` runs once per instance. Names it declares are visible to the template. Return values are not required when the Vite plugin compiles the file: the plugin returns those bindings for you. A hand-written setup module should `return` the bindings.
 
-Bound child props (`:name="name"`) are live getters. Read them from the template, or return the getter from setup. Calling the getter once captures a snapshot.
+## Props, events, slots, and context
 
-DOM listeners on a component (`<UserCard @click="save" />`) are attached to the component's root element. They are not a separate emit channel.
+Call `defineProps` during setup. Each declared prop is a getter. `props.count()` reads the current value, including after the parent updates it. The child is not remounted. `const n = props.count()` stores a snapshot. Return the getter (`count: props.count`) when the template should keep updating. A required prop with no default warns `BD1004` in development. An undeclared prop warns `BD1005`.
+
+`emit('save', payload)` calls the parent's `@save` handler with that payload. It does not dispatch a DOM event. `@save` on a component tag is that listener. A native `@click` belongs on an element inside the template. A native event name passed as `onClick` from JavaScript is still attached to the root; a template `@name` is not.
+
+Default slot content is the element's children. `x-slot="extra"` fills `<slot name="extra">`. `:item` on a `<slot>` is a scoped value and stays live. Slot markup is parsed in the parent's scope, so a parent signal used inside the slot keeps updating. Slotted elements are marked `data-basedom-slot`. Scoped CSS does not style that element or its descendants. The child's own elements still match.
+
+`provide(key, value)` stores a value on the component owner. `inject(key)` walks ancestors. Pass a signal through and the child reads the same signal. `inject(key, fallback)` uses the fallback when no ancestor provided it. With no fallback, a missing key throws `BD1006`.
+
+## Watchers and async data
+
+`watch(() => source(), (next, prev, onCleanup) => {}, { immediate })` reruns when the source changes. The previous `onCleanup` runs first, and again when the watcher stops or the component unmounts. Use it to abort an in-flight request.
+
+`createResource(source, fetcher)` exposes `loading`, `error`, `value`, and `refetch`. In a template read `resource.value`, `resource.loading`, and `resource.error`. The fetcher receives `{ signal }`. A new source value aborts the previous signal and drops a late response.
+
+## Errors and route data
+
+`x-boundary="This screen failed."` catches errors thrown while rendering its subtree and errors thrown by effects created there. It shows the message, the error text, and a Reset button. It does not catch errors from event handlers or timers. Put it on the layout outlet (`<main x-boundary x-outlet>`) so a child screen can fail without unmounting the layout.
+
+`lazy(() => loadComponent(url))` or `lazy(() => import('./screen.js'))` loads a screen on navigation. An `async function` component is treated the same way. A normal function is the screen itself and is not called early.
+
+`load({ params, query, path, signal })` runs before the screen mounts. The screen reads `routeData` from props. A newer `navigate()` aborts `signal` and drops the result. While it waits, the outlet says `Loading…`. A thrown error renders inside the outlet. An unknown path still renders 404 inside the layout.
 
 ## Two ways to load a component
 
@@ -62,6 +82,12 @@ import { basedom } from 'basedom/vite';
 
 export default { plugins: [basedom()] };
 ```
+
+The plugin accepts its own module. A template edit replaces the mounted element and keeps the page from doing a full reload. Setup runs again, so signal state inside that component is not copied across the update. If the new module cannot be applied, the plugin calls `import.meta.hot.invalidate()` and Vite reloads the page.
+
+`vite build` writes `basedom-graph.json` next to the bundle. It lists each compiled SFC's bindings, `defineProps` keys, `emit` names, slots, `x-model` targets, and attribute bindings. Routes are included when a JavaScript module calls `defineRoute` and the path strings are visible as literals. That scan is not a full JavaScript parser.
+
+Compile and runtime failures use stable codes (`BD1001` expression, `BD1003` x-model, `BD1004` missing prop, `BD1006` missing inject, `BD1007` boundary, `BD1010` route load, `BD1011` lazy screen, `BD1015` compile, `BD1016` inline script). The message includes the file, the expression, and a fix hint when those are known.
 
 See `examples/vite-counter`. Check it with:
 

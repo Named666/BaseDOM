@@ -24,8 +24,21 @@ export function createOwner() {
     parent: currentOwner,
     cleanups: [],
     hooks: { onMount: [], onUnmount: [], onUpdate: [] },
+    provides: null,
+    boundary: null,
+    rawProps: null,
+    declaredProps: null,
     disposed: false
   };
+}
+
+function findBoundary(owner) {
+  let current = owner;
+  while (current) {
+    if (typeof current.boundary === 'function') return current.boundary;
+    current = current.parent;
+  }
+  return null;
 }
 
 export function runWithOwner(owner, fn) {
@@ -213,6 +226,7 @@ export function signal(nameOrValue, initialValueIfPersistent) {
  */
 export function effect(fn) {
   let disposed = false;
+  const boundary = findBoundary(currentOwner);
 
   const cleanupDependencies = () => {
     runner.dependencies.forEach((cleanupFn) => cleanupFn());
@@ -230,6 +244,12 @@ export function effect(fn) {
     currentEffect = runner;
     try {
       fn();
+    } catch (error) {
+      if (boundary) {
+        boundary(error);
+        return;
+      }
+      throw error;
     } finally {
       currentEffect = previous;
       effectDepth -= 1;
@@ -278,4 +298,47 @@ export function computed(fn) {
   getter.__isSignal = true;
   getter._isSignal = true;
   return getter;
+}
+
+/**
+ * Runs `callback` when `source()` changes.
+ * `onCleanup` from the previous run runs before the next one, and on stop.
+ * @template T
+ * @param {() => T} source
+ * @param {(next: T, prev: T|undefined, onCleanup: (fn: () => void) => void) => void} callback
+ * @param {{ immediate?: boolean }} [options]
+ * @returns {() => void}
+ */
+export function watch(source, callback, options = {}) {
+  if (typeof source !== 'function') {
+    throw new Error('[BaseDOM BD1013] watch() source must be a function. Fix: pass () => signal() so the watcher can subscribe.');
+  }
+  let previous;
+  let hasPrevious = false;
+  let pendingCleanup = null;
+  const runCleanup = () => {
+    const fn = pendingCleanup;
+    pendingCleanup = null;
+    if (typeof fn === 'function') fn();
+  };
+  const dispose = effect(() => {
+    const next = source();
+    if (!hasPrevious) {
+      hasPrevious = true;
+      previous = next;
+      if (!options.immediate) return;
+      callback(next, undefined, (fn) => { pendingCleanup = fn; });
+      return;
+    }
+    const prev = previous;
+    previous = next;
+    runCleanup();
+    callback(next, prev, (fn) => { pendingCleanup = fn; });
+  });
+  const stop = () => {
+    runCleanup();
+    dispose();
+  };
+  try { onCleanup(stop); } catch { /* outside setup the caller holds stop() */ }
+  return stop;
 }

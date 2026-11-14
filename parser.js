@@ -1,7 +1,8 @@
 // parser.js
 import { Element } from './html.js';
 import { computed } from './state.js';
-import { _reactive, evaluateExpression } from './expression.js';
+import { _reactive, evaluateExpression, childScope } from './expression.js';
+import { reportDiagnostic } from './diagnostics.js';
 import { getComponent } from './registry.js';
 import { normalizeAttrValue } from './components.js';
 
@@ -26,7 +27,10 @@ function parseTextNode(text, context) {
         if (v == null) return '';
         return v;
       } catch (error) {
-        console.error(`Interpolation error: ${expr}`, error);
+        reportDiagnostic('BD1001', `expression failed: ${expr}`, {
+          expression: expr,
+          hint: 'Check the {{ }} expression. It can read names returned from setup.'
+        });
         return `{{${expr}}}`;
       }
     });
@@ -192,8 +196,18 @@ export function parseNode(node, context, componentStyles = null) {
                 if (k !== 'attrs') attrs[k] = directiveResult[k];
             }
         }
-        const children = Array.from(node.childNodes).map(child => parseNode(child, attrs)).filter(child => child !== null && child !== undefined);
+        // Slot markup keeps the parent scope. attrs is props, not that scope.
+        const local = childScope(context);
+        local.__slots = {};
+        const children = [];
+        for (const child of Array.from(node.childNodes)) {
+          const rendered = parseNode(child, local);
+          if (rendered === null || rendered === undefined || rendered === '') continue;
+          if (typeof rendered === 'function' && rendered.__basedomSlot) continue;
+          children.push(rendered);
+        }
         attrs.children = children;
+        if (local.__slots && Object.keys(local.__slots).length) attrs.__slots = local.__slots;
         if (componentStyles) attrs.styles = componentStyles;
         return componentFn(attrs);
     }

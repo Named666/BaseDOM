@@ -7,6 +7,37 @@ import { signal } from './state.js';
 import { parseComponent } from './parser.js';
 import { devWarn } from './dev.js';
 import { resolveComponentPath } from './paths.js';
+import { reportDiagnostic } from './diagnostics.js';
+
+let activeLoad = null;
+
+/** Aborts the route load() that is currently in flight. */
+export function abortActiveRouteLoad() {
+  if (activeLoad) {
+    activeLoad.abort();
+    activeLoad = null;
+  }
+}
+
+function isLazyComponent(component) {
+  return typeof component === 'function'
+    && (component.__basedomLazy === true || component.constructor?.name === 'AsyncFunction');
+}
+
+function findOutlet(name = 'main') {
+  const selector = name === 'main' ? '[x-outlet], [x-outlet="main"]' : `[x-outlet="${name}"]`;
+  return document.querySelector(selector);
+}
+
+function statusNode(state, error) {
+  const p = document.createElement('p');
+  p.setAttribute('data-route-state', state);
+  p.setAttribute('role', state === 'error' ? 'alert' : 'status');
+  p.textContent = state === 'error'
+    ? (error && error.message ? error.message : 'This page failed to load.')
+    : 'Loading…';
+  return p;
+}
 
 
 let errorBoundary = null;
@@ -98,6 +129,23 @@ if (typeof window !== 'undefined') {
 
 
 async function resolveComponent(component) {
+  if (isLazyComponent(component)) {
+    if (!component.__basedomResolved) {
+      const pending = Promise.resolve().then(async () => {
+        const loaded = component.__basedomLazy ? await component.load() : await component();
+        if (typeof loaded === 'function') return loaded;
+        if (loaded && typeof loaded.default === 'function') return loaded.default;
+        throw reportDiagnostic('BD1011', 'Lazy screen did not resolve to a component', {
+          hint: 'Return the component function from loadComponent(), or use the default export of import().'
+        });
+      });
+      component.__basedomResolved = pending.catch((error) => {
+        component.__basedomResolved = null;
+        throw error;
+      });
+    }
+    return component.__basedomResolved;
+  }
   // Normalize to always return a function that accepts props
   // If it's already a function, return it directly to avoid creating an unnecessary wrapper
   if (typeof component === 'function') {
@@ -170,27 +218,125 @@ export function setRootElement(selector) {
 }
 
 
-async function composeNestedLayouts(matched, params, query) {
+function routeProps(entry, params, query, extras, children, isLeaf) {
+  return {
+    params: { ...entry.params, ...params },
+    query,
+    children,
+    outlet: entry.route.outlet || (isLeaf ? 'main' : undefined),
+    routeData: isLeaf ? extras.routeData : undefined,
+    routeError: isLeaf ? extras.routeError : undefined,
+    routeState: isLeaf ? extras.routeState : undefined
+  };
+}
+
+async function composeNestedLayouts(matched, params, query, extras = {}, leafOverride = null) {
   let childFn = null;
   for (let i = matched.length - 1; i >= 0; i--) {
-    const { route, params: routeParams } = matched[i];
+    const entry = matched[i];
+    const { route } = entry;
+    const isLeaf = i === matched.length - 1;
     devWarn(`Composing layout: ${route.path}`);
-    const componentFn = await resolveComponent(route.componentFn);
+    const componentFn = isLeaf && leafOverride ? leafOverride : await resolveComponent(route.componentFn);
     const currentChild = childFn;
-    childFn = () => {
-      const props = {
-        params: { ...routeParams, ...params },
-        query,
-        children: currentChild,
-        outlet: route.outlet || (i === matched.length - 1 ? 'main' : undefined)
-      };
-      return componentFn(props);
-    };
+    childFn = () => componentFn(routeProps(entry, params, query, extras, currentChild, isLeaf));
   }
   return childFn ? childFn() : null;
 }
 
-export async function renderRoute(pathname) {
+async function paintMatched(matched, params, query, extras, leafOverride) {
+  const newRoutes = matched.map((entry) => entry.route);
+  const outletName = matched[matched.length - 1].route.outlet || 'main';
+  const outlet = findOutlet(outletName);
+  if (leafOverride && outlet) {
+    mount(leafOverride, outlet);
+    if (prevRoutes.length === 0) prevRoutes = newRoutes;
+    return;
+  }
+  if (!leafOverride && isPartialOutletUpdate(prevRoutes, newRoutes) && outlet) {
+    const leaf = matched[matched.length - 1];
+    try {
+      const componentFn = await resolveComponent(leaf.route.componentFn);
+      mount(() => componentFn(routeProps(leaf, params, query, extras, undefined, true)), outlet);
+    } catch (error) {
+      if (outlet.__basedomBoundary) {
+        outlet.__basedomBoundary(error);
+      } else {
+        mount(() => statusNode('error', error), outlet);
+      }
+    }
+    prevRoutes = newRoutes;
+    return;
+  }
+  const element = await composeNestedLayouts(matched, params, query, extras, leafOverride);
+  setCurrentView(element);
+  prevRoutes = newRoutes;
+}
+
+async function runRouteLoad(matched, params, query, cleanPath, isCurrent) {
+  const leaf = matched[matched.length - 1].route;
+  const result = { routeData: undefined, routeError: null, routeState: 'ready', dropped: false };
+  const warm = isLazyComponent(leaf.componentFn) ? resolveComponent(leaf.componentFn) : null;
+  if (typeof leaf.load !== 'function' && !warm) return result;
+  if (typeof leaf.load === 'function') {
+    result.routeState = 'loading';
+    await paintMatched(matched, params, query, result, () => statusNode('loading'));
+    if (!isCurrent()) {
+      result.dropped = true;
+      return result;
+    }
+    abortActiveRouteLoad();
+    const controller = new AbortController();
+    activeLoad = controller;
+    try {
+      const data = await leaf.load({ params, query, path: cleanPath, signal: controller.signal });
+      if (!isCurrent() || controller.signal.aborted) {
+        result.dropped = true;
+        return result;
+      }
+      result.routeData = data;
+      result.routeState = 'ready';
+    } catch (error) {
+      if (!isCurrent() || controller.signal.aborted || (error && error.name === 'AbortError')) {
+        result.dropped = true;
+        return result;
+      }
+      result.routeError = error;
+      result.routeState = 'error';
+      reportDiagnostic('BD1010', error && error.message ? error.message : 'Route load failed', {
+        hint: 'The layout stays mounted. Abort when signal is aborted so a newer navigation can drop this result.'
+      });
+      return result;
+    } finally {
+      if (activeLoad === controller) activeLoad = null;
+    }
+  }
+  if (warm && typeof leaf.load !== 'function') {
+    result.routeState = 'loading';
+    await paintMatched(matched, params, query, result, () => statusNode('loading'));
+    if (!isCurrent()) {
+      result.dropped = true;
+      return result;
+    }
+  }
+  if (warm) {
+    try {
+      await warm;
+    } catch (error) {
+      if (!isCurrent()) {
+        result.dropped = true;
+        return result;
+      }
+      result.routeError = error;
+      result.routeState = 'error';
+      return result;
+    }
+  }
+  return result;
+}
+
+export async function renderRoute(pathname, nav = {}) {
+  const isCurrent = typeof nav.isCurrent === 'function' ? nav.isCurrent : () => true;
   if (!rootElement) {
     devWarn('renderRoute called but rootElement is not set.');
     return;
@@ -210,7 +356,6 @@ export async function renderRoute(pathname) {
     const match = findMatchingRoute(cleanPath);
     if (match) {
       const { matched, params } = match;
-      const newRoutes = matched.map(m => m.route);
       // Set document title from route meta
       const titles = matched.map(m => {
         const t = m.route.meta?.title;
@@ -222,32 +367,14 @@ export async function renderRoute(pathname) {
         document.title = titles.join('')
       }
 
-  // Partial outlet update for leaf route
-  if (isPartialOutletUpdate(prevRoutes, newRoutes)) {
-        const leaf = matched[matched.length - 1];
-        const componentFn = await resolveComponent(leaf.route.componentFn);
-        const outletName = leaf.route.outlet || 'main';
-        const outletSelector = outletName === 'main'
-          ? '[x-outlet], [x-outlet="main"]'
-          : `[x-outlet="${outletName}"]`;
-        const outlet = document.querySelector(outletSelector);
-        if (outlet) {
-          const props = {
-            params: { ...leaf.params, ...match.params },
-            query,
-            children: undefined,
-            outlet: outletName
-          };
-          mount(() => componentFn(props), outlet);
-          prevRoutes = newRoutes;
-          return;
-        } else {
-          devWarn(`Outlet not found: ${outletSelector}`);
-        }
+      const loaded = await runRouteLoad(matched, params, query, cleanPath, isCurrent);
+      if (!isCurrent() || loaded.dropped) return { dropped: true };
+      if (loaded.routeState === 'error') {
+        await paintMatched(matched, params, query, loaded, () => statusNode('error', loaded.routeError));
+        return;
       }
-
-      // Compose nested layouts from matched routes
-      element = await composeNestedLayouts(matched, params, query);
+      await paintMatched(matched, params, query, loaded, null);
+      return;
     } else {
       document.title = '404 Not Found';
       devWarn(`Route not found: ${pathname}`);

@@ -4,7 +4,7 @@ These are current gaps, not a claim that they are small or temporary.
 
 ## Stable contract
 
-Signals, computed values, effects, cleanup, `mount`, HTML screens (`defineSfc`, `loadComponent`, the Vite plugin), template bindings including `x-model` on text, checkbox, radio, select, and number controls, keyed `x-for`, and the router behaviors covered by tests: layout outlet, back/forward path, 404, and a newer navigation replacing one still waiting on a guard. `createForm` stores values and validators. `setStyleNonce` copies a nonce onto scoped style tags.
+Signals, computed values, effects, `watch`, cleanup, `mount`, HTML screens (`defineSfc`, `loadComponent`, the Vite plugin), `defineProps` / `emit` / slots / `provide` / `inject`, `createResource`, `x-boundary` for render and effect errors, template bindings including `x-model` on text, checkbox, radio, select, and number controls, keyed `x-for`, and the router behaviors covered by tests: layout outlet, lazy screens, `load()` that drops a stale result, loading and error states, back/forward path, 404 inside the layout, and a newer navigation replacing one still waiting on a guard. `createForm` reads with `field()` and writes with `field(next)`. `setStyleNonce` copies a nonce onto scoped style tags. `index.d.ts` covers that surface.
 
 ## Experimental
 
@@ -24,15 +24,17 @@ Template expressions do not use `eval` or `new Function`, so `script-src 'self'`
 
 ## Not part of that contract
 
-- **Store, form builders, and fetch/HTML swap.** They still ship. `createForm` stores `signal()` tuples and then calls the tuple as a function, so that helper does not work. Fetch swap assigns HTML (`innerHTML`). Treat response HTML as trusted. It is not the SFC sandbox. The router has a two-screen test (layout stays mounted, outlet swaps, back button). Guards and scroll restoration are still unverified. Import `directives-core.js` for screens. `directives.js` also loads fetch and the router.
-- **No virtual DOM, and no claim of being faster** than Vue, React, Angular, or Solid. Updates are direct DOM writes. A Vite 6 production build of `examples/vite-counter` (screen runtime only, router not imported) was **31.42 kB minified / 10.56 kB gzip**. An esbuild minify of `examples/spa/app.js` (runtime plus router, screens fetched separately) was **46.1 kB minified / 16.1 kB gzip**. These are measurements of this tree, not a comparison to other libraries. The earlier 52 kB / 17 kB figure included the router and fetch modules on a page that never navigated.
+- **Store, form builders, and fetch/HTML swap.** `Form`, `Field`, and `Submit` are experimental. `createForm` itself is in the stable contract above. Fetch swap assigns HTML (`innerHTML`). Treat response HTML as trusted. It is not the SFC sandbox. Route guards and scroll restoration still ship and are not part of the tested contract. Import `directives-core.js` for screens. `directives.js` also loads fetch and the router.
+- **No virtual DOM, and no claim of being faster** than Vue, React, Angular, or Solid. Updates are direct DOM writes. A Vite 6 production build of `examples/vite-counter` (screen runtime only, router not imported) was **35.55 kB minified / 11.97 kB gzip** (`dist/vite-counter/assets/index-DyYl0AIl.js`, 35547 bytes, gzip 11969). An esbuild minify of `examples/spa/app.js` (runtime plus router, screens fetched separately) was **55.72 kB minified / 19.19 kB gzip** (55720 bytes, gzip 19191). The previous counter figure was 31.42 kB / 10.56 kB and the previous SPA figure was 46.1 kB / 16.1 kB. These are measurements of this tree, not a comparison to other libraries.
 - **`x-for` without `x-key` reuses DOM by index.** Local state inside a row sticks to the position. Set `x-key`.
 - **`x-for` anchors are comment nodes** inside the parent. They can affect `:nth-child` and some CSS selectors. Rows that are not a single element are wrapped in a `<span>`.
-- **Props are getters, not a proxy.** Destructuring a prop in setup reads it once.
-- **Slots** exist in `directives.js` and are not covered by the new tests.
-- **CSS scoping** prefixes selectors and adds a class on the component root. It is not Shadow DOM. `:global`, deep selectors, and complicated keyframes are not a supported contract.
+- **Props are getters, not a proxy.** `defineProps()` returns a getter per key. `props.count()` reads the live value. `const n = props.count()` snapshots it. Destructuring the raw props object does not subscribe.
+- **Slots keep the parent scope.** Scoped CSS skips elements marked `data-basedom-slot` and their descendants. It is not Shadow DOM. `:global`, deep selectors, and complicated keyframes are not a supported contract.
+- **`x-boundary` catches render and effect errors in its subtree.** It does not catch errors thrown from event handlers or from `setTimeout` / `setInterval`.
+- **HMR remounts the component.** The element is replaced and setup runs again. Signal state created inside setup is not preserved. If the new module cannot be swapped in, Vite reloads the page.
+- **The app graph is a source scan.** `defineProps`, `emit('name')`, slots, and `x-model` are read from the file text. Route paths are the quoted `path:` strings near `defineRoute`. It is not a type-aware language server.
 - **Expressions are a subset of JavaScript.** See [sfc.md](./sfc.md). There is no event modifier (`.prevent`, `.stop`).
-- **No SSR, hydration, or TypeScript types.**
+- **No SSR or hydration.** `index.d.ts` types the tested JavaScript API. It does not type-check template expressions.
 - **Persistent signals** use `sessionStorage` and `JSON`. Values that do not survive `JSON.stringify` will not round-trip.
 - **Storing a function in a signal** is treated as an updater (`setCount(value => value + 1)`). Box a function if it is data.
 

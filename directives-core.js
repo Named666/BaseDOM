@@ -1,6 +1,7 @@
 // directives.js
-import { computed, effect, signal, untrack, unwrapSignal, createOwner, runWithOwner, disposeOwner } from './state.js';
-import { evaluateExpression, _reactive } from './expression.js';
+import { computed, effect, signal, untrack, unwrapSignal, createOwner, runWithOwner, disposeOwner, getCurrentOwner } from './state.js';
+import { evaluateExpression, childScope } from './expression.js';
+import { reportDiagnostic } from './diagnostics.js';
 import { registerDirective } from './parser.js';
 import { createComponent } from './components.js';
 import { callOnMountRecursive, callOnUnmountRecursive } from './lifecycle.js';
@@ -341,7 +342,10 @@ export const xModelDirective = {
         }
 
         if (!getter || typeof getter !== 'function' || !setter || typeof setter !== 'function') {
-            console.error(`[BaseDOM] x-model "${modelExpr}" needs a signal getter with .set, or a setter named set${modelExpr.charAt(0).toUpperCase()}${modelExpr.slice(1)}.`);
+            reportDiagnostic('BD1003', `x-model "${modelExpr}" needs a signal getter with .set, or a setter named set${modelExpr.charAt(0).toUpperCase()}${modelExpr.slice(1)}`, {
+              expression: modelExpr,
+              hint: 'Return the signal getter from setup. A tuple [get, set] also works.'
+            });
             return;
         }
 
@@ -487,24 +491,35 @@ export const slotDirective = {
         for (const attr of Array.from(node.attributes || [])) {
             if (attr.name.startsWith(':')) {
                 const propName = attr.name.slice(1);
-                // Evaluate the prop value in the current context
-                slotProps[propName] = _reactive(evaluateExpression(attr.value, context));
+                const expr = attr.value;
+                // Live getter so a scoped slot updates when the child changes.
+                slotProps[propName] = computed(() => evaluateExpression(expr, context));
             }
         }
         // Find slot content in context
         const slotContent = context && context.__slots && context.__slots[slotName];
         if (slotContent) {
-            // Pass slotProps to slot content as context
-            return () => typeof slotContent === 'function' ? slotContent(slotProps) : slotContent;
+            return () => {
+                const rendered = typeof slotContent === 'function' ? slotContent(slotProps) : slotContent;
+                return stampSlot(rendered);
+            };
         }
-        // Default slot: fallback to children prop or empty
         if (slotName === 'default') {
-            // Vue: default slot always renders children prop
-            return context && context.children !== undefined ? context.children : '';
+            const children = context && context.children !== undefined ? context.children : '';
+            return () => stampSlot(typeof children === 'function' ? children() : children);
         }
         return '';
     }
 };
+
+function stampSlot(node) {
+    if (Array.isArray(node)) {
+        node.forEach(stampSlot);
+        return node;
+    }
+    if (node instanceof Element) node.setAttribute('data-basedom-slot', '');
+    return node;
+}
 
 // <div x-slot="usercard">...</div> registers slot content for <slot name="usercard">
 export const xSlotDirective = {
@@ -519,16 +534,13 @@ export const xSlotDirective = {
         if (!context.__slots) context.__slots = {};
         // Slot content is a function that receives slotProps
         context.__slots[slotName] = (slotProps = {}) => {
-            // Merge slotProps into context for slot content
-            const slotContext = { ...context, ...slotProps };
-            // Remove __slots from slotContext to avoid infinite recursion
-            delete slotContext.__slots;
-            // If the registered node is a <template>, render its children (do not keep the <template> wrapper)
+            // Parent names stay visible. Slot props are added as own names.
+            const slotContext = childScope(context);
+            for (const [key, value] of Object.entries(slotProps || {})) slotContext[key] = value;
             try {
                 if (nodeClone.tagName && nodeClone.tagName.toLowerCase() === 'template') {
                     const contentRoot = nodeClone.content || nodeClone;
                     const children = Array.from(contentRoot.childNodes || []).map(n => parseNode(n, slotContext)).filter(Boolean);
-                    // If a single child, return it directly; otherwise return the array
                     return children.length === 1 ? children[0] : children;
                 }
             } catch (e) {
@@ -536,8 +548,10 @@ export const xSlotDirective = {
             }
             return parseNode(nodeClone, slotContext);
         };
-        // Do not render this node directly
-        return () => null;
+        // Registered above. Keep it out of the default children list.
+        const hide = () => null;
+        hide.__basedomSlot = true;
+        return hide;
     }
 };
 
@@ -574,6 +588,8 @@ export const xOutletDirective = {
         for (const attr of [...node.attributes]) {
             if (attr.name !== 'x-outlet') host.setAttribute(attr.name, attr.value);
         }
+        const owner = getCurrentOwner();
+        if (owner) host.__basedomOwner = owner;
         const child = context && context.children;
         const content = typeof child === 'function' ? child() : child;
         if (content instanceof Node) host.appendChild(content);
@@ -582,7 +598,99 @@ export const xOutletDirective = {
     }
 };
 
+/**
+ * Catches errors thrown while rendering this subtree, and errors thrown by
+ * effects created in it. Shows fallback markup and a reset control.
+ * Does not catch errors from event handlers or timers.
+ */
+export const xBoundaryDirective = {
+    controlFlow: true,
+    handle({ node, context, parseNode }) {
+        if (!node.hasAttribute || !node.hasAttribute('x-boundary')) return null;
+        const message = node.getAttribute('x-boundary') || 'This screen failed.';
+        const isOutlet = node.hasAttribute('x-outlet');
+        const outletName = node.getAttribute('x-outlet') || 'main';
+        const host = document.createElement(node.tagName.toLowerCase());
+        for (const attr of [...node.attributes]) {
+            if (attr.name === 'x-boundary') continue;
+            host.setAttribute(attr.name, attr.value);
+        }
+        host.setAttribute('x-boundary', message);
+        const boundaryOwner = createOwner();
+        let showing = false;
+        const show = (error) => {
+            if (showing) return;
+            showing = true;
+            try {
+                reportDiagnostic('BD1007', error && error.message ? error.message : 'Component render failed', {
+                    hint: 'The boundary kept the rest of the page mounted. Reset renders the subtree again. Event handlers and timers are not caught.'
+                });
+                callOnUnmountRecursive(host);
+                host.replaceChildren();
+                host.appendChild(boundaryFallback(message, error, () => {
+                    showing = false;
+                    render();
+                }));
+            } finally {
+                showing = false;
+            }
+        };
+        boundaryOwner.boundary = show;
+        host.__basedomOwner = boundaryOwner;
+        host.__basedomBoundary = show;
+        const contentNodes = [...node.childNodes].filter((child) => {
+            return !(child.nodeType === Node.ELEMENT_NODE && child.hasAttribute && child.hasAttribute('x-fallback'));
+        });
+        function render() {
+            callOnUnmountRecursive(host);
+            host.replaceChildren();
+            try {
+                runWithOwner(boundaryOwner, () => {
+                    if (isOutlet) {
+                        const child = context && context.children;
+                        const content = typeof child === 'function' ? child() : child;
+                        if (host.querySelector('[data-boundary-fallback]')) {
+                            if (content && content.__basedomOwner) disposeOwner(content.__basedomOwner);
+                            return;
+                        }
+                        if (content instanceof Node) host.appendChild(content);
+                        else if (content != null && content !== false && content !== '') host.textContent = String(content);
+                    } else if (!host.querySelector('[data-boundary-fallback]')) {
+                        const shell = createComponent('div', {
+                            children: contentNodes.map((child) => parseNode(child, context)).filter((child) => child != null && child !== '')
+                        });
+                        shell.style.display = 'contents';
+                        host.appendChild(shell);
+                    }
+                });
+            } catch (error) {
+                show(error);
+            }
+        }
+        render();
+        return host;
+    }
+};
+
+function boundaryFallback(message, error, reset) {
+    const box = document.createElement('div');
+    box.setAttribute('data-boundary-fallback', '');
+    const alert = document.createElement('p');
+    alert.setAttribute('role', 'alert');
+    alert.textContent = message;
+    const detail = document.createElement('pre');
+    detail.textContent = error && error.message ? error.message : String(error);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.boundaryReset = '';
+    button.textContent = 'Reset';
+    button.addEventListener('click', reset);
+    box.append(alert, detail, button);
+    return box;
+}
+
 // Register built-in directives
+registerDirective('x-boundary', xBoundaryDirective);
 registerDirective('x-outlet', xOutletDirective);
 registerDirective('slot', slotDirective);
 registerDirective('x-slot', xSlotDirective);

@@ -100,8 +100,13 @@ function applyAttribute(el, key, value, effectsToCleanup) {
     const eventName = key.slice(2).toLowerCase();
     const handlerProp = `__${eventName}_handler`;
     if (el[handlerProp]) el.removeEventListener(eventName, el[handlerProp]);
-    el.addEventListener(eventName, value);
-    el[handlerProp] = value;
+    const wrapped = (event) => {
+      const owner = ownerForElement(el);
+      if (owner) return runWithOwner(owner, () => value(event));
+      return value(event);
+    };
+    el.addEventListener(eventName, wrapped);
+    el[handlerProp] = wrapped;
   } else if (key === 'class' && typeof value === 'object' && value !== null && !isSignalLike(value)) {
     effectsToCleanup.push(effect(() => {
       el.className = Object.entries(value).filter(([, v]) => typeof v === 'function' ? v() : v).map(([k]) => k).join(' ');
@@ -121,6 +126,15 @@ function applyAttribute(el, key, value, effectsToCleanup) {
   } else {
     assignAttr(el, key, value);
   }
+}
+
+function ownerForElement(element) {
+  let node = element;
+  while (node) {
+    if (node.__basedomOwner && !node.__basedomOwner.disposed) return node.__basedomOwner;
+    node = node.parentNode;
+  }
+  return null;
 }
 
 function isSignalLike(value) {
@@ -168,27 +182,23 @@ export function handleScopedStyles(styles, element) {
       tempCss = tempCss.replace('/*__KEYFRAME_PLACEHOLDER__*/', block);
     });
     css = tempCss;
+    const scopeOne = (sel) => {
+      sel = sel.trim();
+      if (!sel) return '';
+      if (sel.startsWith('&')) return `.${className}${sel.substring(1)}`;
+      if (sel.startsWith(`.${className}`)) return sel;
+      // Slotted content is marked and keeps the parent's styles.
+      return `.${className} ${sel}:not([data-basedom-slot]):not([data-basedom-slot] *)`;
+    };
     // Prefix selectors
     css = css.replace(/(^|\})\s*([^{@}][^{]*)\{/g, (match, brace, selector) => {
-      const selectors = selector.split(',').map(sel => {
-        sel = sel.trim();
-        if (!sel) return '';
-        if (sel.startsWith('&')) return `.${className}${sel.substring(1)}`;
-        if (sel.startsWith(`.${className}`)) return sel;
-        return `.${className} ${sel}`;
-      });
+      const selectors = selector.split(',').map(scopeOne);
       return `${brace} ${selectors.join(', ')}{`;
     });
     // Prefix selectors in @media/@supports
     css = css.replace(/(@media[^{]+{[\s\S]*?})/g, block => {
       return block.replace(/([^{@}][^{]*)\{/g, (match, selector) => {
-        const selectors = selector.split(',').map(sel => {
-          sel = sel.trim();
-          if (!sel) return '';
-          if (sel.startsWith('&')) return `.${className}${sel.substring(1)}`;
-          if (sel.startsWith(`.${className}`)) return sel;
-          return `.${className} ${sel}`;
-        });
+        const selectors = selector.split(',').map(scopeOne);
         return `${selectors.join(', ')}{`;
       });
     });
@@ -400,7 +410,23 @@ export function mount(component, target) {
   const container = resolveTarget(target);
   if (!container) throw new Error(`mount target not found: ${String(target)}`);
   releaseContainer(container);
-  const node = typeof component === 'function' ? component() : component;
+  const parentOwner = container.__basedomOwner || null;
+  let node;
+  try {
+    node = parentOwner
+      ? runWithOwner(parentOwner, () => (typeof component === 'function' ? component() : component))
+      : (typeof component === 'function' ? component() : component);
+  } catch (error) {
+    if (typeof container.__basedomBoundary === 'function') {
+      container.__basedomBoundary(error);
+      return container;
+    }
+    throw error;
+  }
+  if (container.querySelector && container.querySelector('[data-boundary-fallback]')) {
+    if (node && node.__basedomOwner) disposeOwner(node.__basedomOwner);
+    return container;
+  }
   if (node instanceof HTMLElement || node instanceof DocumentFragment) replaceContent(container, node);
   else container.textContent = node == null ? '' : String(node);
   container[RENDER_DISPOSE] = () => {

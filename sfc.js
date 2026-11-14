@@ -13,17 +13,120 @@
 
 import { parseNode, parseTemplateSource } from './parser.js';
 import { extractSfcParts } from './sfc-compile.js';
-import { runWithOwner, createOwner } from './state.js';
-import { bindComponentOwner, attachLifecycleHooks } from './lifecycle.js';
+import { runWithOwner, createOwner, disposeOwner, getCurrentOwner, isSignal, unwrapSignal } from './state.js';
+import { bindComponentOwner, attachLifecycleHooks, callOnMountRecursive } from './lifecycle.js';
 import { createComponent, handleScopedStyles } from './components.js';
 import { devWarn } from './dev.js';
+import { reportDiagnostic } from './diagnostics.js';
 import './directives-core.js';
 
 export const INLINE_SCRIPT_ERROR =
-  'BaseDOM refused to execute inline <script> from SFC text. ' +
+  '[BaseDOM BD1016] BaseDOM refused to execute inline <script> from SFC text. ' +
   'Compile author SFCs with the Vite plugin (vite/plugin.js), or use ' +
   '<script setup src="./component.js"></script> for a same-directory module. ' +
   'Server-generated HTML must use renderServerTemplate(html, context), which does not run script.';
+
+const FRAMEWORK_PROP = /^(children|__slots|params|query|outlet|routeData|routeError|routeState|class|id|style|key|styles)$/;
+
+function isFrameworkProp(key) {
+  return FRAMEWORK_PROP.test(key) || key.startsWith('on') || key.startsWith('@') || key.startsWith('x-');
+}
+
+function propSpec(spec) {
+  if (spec && typeof spec === 'object' && !isSignal(spec) && (Object.prototype.hasOwnProperty.call(spec, 'default') || spec.required === true)) {
+    return spec;
+  }
+  if (spec === undefined) return {};
+  return { default: spec };
+}
+
+function missingDefault(spec) {
+  return !spec || !Object.prototype.hasOwnProperty.call(spec, 'default');
+}
+
+/**
+ * Declares the props this instance reads. Call during setup.
+ * Each key is a getter. `props.count()` reads the current value.
+ * `const n = props.count()` stores a snapshot. Return `props.count` itself
+ * when the template should keep updating.
+ * @param {Record<string, { default?: *, required?: boolean }|*>} [schema]
+ */
+export function defineProps(schema = {}) {
+  const owner = getCurrentOwner();
+  if (!owner) {
+    throw reportDiagnostic('BD1008', 'defineProps() must run during setup', {
+      hint: 'Call defineProps() inside setup(), before the first await.'
+    });
+  }
+  const raw = owner.rawProps || {};
+  const declared = {};
+  for (const [key, rawSpec] of Object.entries(schema)) {
+    const spec = propSpec(rawSpec);
+    const accessor = () => {
+      if (raw[key] !== undefined) return unwrapSignal(raw[key]);
+      if (!missingDefault(spec)) {
+        const fallback = spec.default;
+        if (typeof fallback === 'function' && !isSignal(fallback)) return fallback();
+        return unwrapSignal(fallback);
+      }
+      return undefined;
+    };
+    accessor.__isSignal = true;
+    accessor._isSignal = true;
+    declared[key] = accessor;
+    if (spec.required && raw[key] === undefined && missingDefault(spec)) {
+      reportDiagnostic('BD1004', `Missing required prop "${key}"`, {
+        devOnly: true,
+        hint: `Pass :${key} from the parent, or add a default in defineProps().`
+      });
+    }
+  }
+  if (Object.keys(schema).length) {
+    for (const key of Object.keys(raw)) {
+      if (isFrameworkProp(key) || Object.prototype.hasOwnProperty.call(schema, key)) continue;
+      reportDiagnostic('BD1005', `Unknown prop "${key}"`, {
+        devOnly: true,
+        hint: `Declare "${key}" in defineProps(), or remove it from the parent tag.`
+      });
+    }
+  }
+  owner.declaredProps = declared;
+  return declared;
+}
+
+function componentListener(props, name) {
+  if (!props || !name) return undefined;
+  const text = String(name);
+  const lower = `on${text.toLowerCase()}`;
+  const camel = `on${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+  if (typeof props[lower] === 'function') return props[lower];
+  if (typeof props[camel] === 'function') return props[camel];
+  return undefined;
+}
+
+/**
+ * Sends a component event to the parent listener `@name`.
+ * The payload is the argument. This does not dispatch a DOM event.
+ * @param {string} name
+ * @param {*} [payload]
+ */
+export function emit(name, payload) {
+  const owner = getCurrentOwner();
+  if (!owner) {
+    throw reportDiagnostic('BD1008', 'emit() must run during setup or a handler in that component', {
+      hint: 'Call emit() from setup or from an event handler created while the component is mounted.'
+    });
+  }
+  const listener = componentListener(owner.rawProps, name);
+  if (typeof listener === 'function') listener(payload);
+}
+
+const NATIVE_DOM_EVENTS = new Set([
+  'click', 'dblclick', 'input', 'change', 'submit', 'focus', 'blur',
+  'keydown', 'keyup', 'keypress', 'mousedown', 'mouseup', 'mouseenter',
+  'mouseleave', 'mouseover', 'mouseout', 'contextmenu', 'wheel',
+  'pointerdown', 'pointerup', 'touchstart', 'touchend', 'reset', 'invalid', 'scroll'
+]);
 
 function blockedScriptUrl(src) {
   return /^(?:data|blob|javascript):/i.test(src) || src.startsWith('//');
@@ -65,11 +168,15 @@ export function resolveSfcScriptSrc(src, baseUrl, options = {}) {
   return resolved.href;
 }
 
-function componentContext(setupResult, props) {
+function componentContext(setupResult, props, declared) {
   const result = setupResult || {};
   const context = { props };
+  if (declared) {
+    for (const [key, value] of Object.entries(declared)) context[key] = value;
+  }
   for (const [key, value] of Object.entries(props || {})) {
     if (key === 'children' || key === '__slots') continue;
+    if (declared && Object.prototype.hasOwnProperty.call(declared, key)) continue;
     context[key] = value;
   }
   for (const [key, value] of Object.entries(result)) {
@@ -86,7 +193,27 @@ function forwardDomListeners(element, props) {
   for (const [key, value] of Object.entries(props)) {
     if (!/^on[A-Z]/.test(key) || typeof value !== 'function') continue;
     if (key === 'onMount' || key === 'onUnmount' || key === 'onUpdate') continue;
-    element.addEventListener(key.slice(2).toLowerCase(), value);
+    const eventName = key.slice(2).toLowerCase();
+    // Component events (emit) stay on the props object. Only real DOM events
+    // are attached to the root, and a template `@name` is lowercase `onname`.
+    if (!NATIVE_DOM_EVENTS.has(eventName)) continue;
+    element.addEventListener(eventName, (event) => runWithOwner(element.__basedomOwner, () => value(event)));
+  }
+}
+
+/**
+ * Replaces a mounted element during HMR and disposes the previous owner.
+ * Setup state is not copied. If this cannot run, the plugin reloads the page.
+ * @param {Element} current
+ * @param {Element} next
+ */
+export function swapHmrElement(current, next) {
+  try {
+    if (current && current.__basedomOwner) disposeOwner(current.__basedomOwner);
+  } catch { /* the owner may already be gone */ }
+  if (current && current.parentNode && next) {
+    current.parentNode.replaceChild(next, current);
+    try { callOnMountRecursive(next); } catch { /* mount hooks are best-effort */ }
   }
 }
 
@@ -117,19 +244,28 @@ export function defineSfc({ template = '', styles = '', setup, name } = {}) {
   function Sfc(props) {
     const owner = createOwner();
     const currentProps = props || {};
-    let result = {};
-    runWithOwner(owner, () => {
-      if (typeof setup === 'function') result = setup(currentProps) || {};
-      if (typeof result.onMount === 'function') owner.hooks.onMount.push(result.onMount);
-      if (typeof result.onUnmount === 'function') owner.hooks.onUnmount.push(result.onUnmount);
-      if (typeof result.onUpdate === 'function') owner.hooks.onUpdate.push(result.onUpdate);
-    });
-    const context = componentContext(result, currentProps);
-    const element = runWithOwner(owner, () => renderParts(template, styles, context, bindComponentOwner(owner)));
-    if (name && element instanceof HTMLElement && !element.hasAttribute('data-basedom-component')) {
-      element.setAttribute('data-basedom-component', name);
+    owner.rawProps = currentProps;
+    try {
+      let result = {};
+      runWithOwner(owner, () => {
+        if (typeof setup === 'function') result = setup(currentProps) || {};
+        if (typeof result.onMount === 'function') owner.hooks.onMount.push(result.onMount);
+        if (typeof result.onUnmount === 'function') owner.hooks.onUnmount.push(result.onUnmount);
+        if (typeof result.onUpdate === 'function') owner.hooks.onUpdate.push(result.onUpdate);
+      });
+      const context = componentContext(result, currentProps, owner.declaredProps);
+      const element = runWithOwner(owner, () => renderParts(template, styles, context, bindComponentOwner(owner)));
+      if (element instanceof HTMLElement) {
+        element.__basedomOwner = owner;
+        if (name && !element.hasAttribute('data-basedom-component')) {
+          element.setAttribute('data-basedom-component', name);
+        }
+      }
+      return element;
+    } catch (error) {
+      disposeOwner(owner);
+      throw error;
     }
-    return element;
   }
   if (name) Object.defineProperty(Sfc, 'name', { value: name });
   return Sfc;

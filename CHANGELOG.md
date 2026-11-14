@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.5.0
+
+### Composition
+
+- `defineProps()` returns a live getter per prop. Reading it later sees the parent's current value without remounting the child. Calling it once still snapshots. Missing required props warn `BD1004`. Unknown props warn `BD1005`.
+- `emit(name, payload)` delivers the payload to `@name` on the component tag. That listener is not a DOM listener on the root.
+- Default, named, and scoped slots keep the parent scope. Scoped CSS does not style `[data-basedom-slot]` content.
+- `provide` / `inject` walk the owner tree and pass signals through. A missing key throws `BD1006` unless a default is passed.
+- `watch(source, callback, { immediate })` runs the previous cleanup when the source changes and when the component unmounts.
+- `createResource` exposes loading, error, value, and refetch. A new source aborts the previous `AbortSignal` and drops the stale response.
+- `x-boundary` catches render and effect errors in its subtree, shows fallback markup, and resets. It does not catch event-handler or timer errors. A layout with `x-boundary` on `x-outlet` stays mounted when a child screen throws.
+- `lazy(() => loadComponent(url))` and `load({ signal })` load a screen's data. A newer navigation aborts the signal and drops the result. The outlet shows loading and error states. 404 stays inside the layout.
+
+### Tooling
+
+- The Vite plugin accepts `.html` SFC updates and swaps the mounted element. Setup state is not copied. A failed swap reloads the page.
+- `vite build` writes `basedom-graph.json` from the same compiler scan: screens, props, emits, slots, `x-model` targets, and literal route paths.
+- Template and runtime failures use `BD1xxx` codes with a file, expression, and fix hint when known.
+
+### Breaking
+
+- `@name` on a component tag is a component event. It is no longer forwarded as a native listener on the root.
+- Scoped CSS no longer matches slotted content.
+
 ## 0.4.0
 
 ### Hardening

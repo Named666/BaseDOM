@@ -2,6 +2,9 @@
 // Turns an author-written .html SFC into a JavaScript module string.
 // Used by the Vite plugin. The runtime does not eval this source.
 // No virtual DOM is generated; the module calls defineSfc().
+// describeSfc / describeRoutes are the same scan the plugin writes to the app graph.
+
+import { reportDiagnostic } from './diagnostics.js';
 
 const INLINE_SCRIPT_HINT = 'Move the script to <script setup src="./component.js"></script> or compile this file with the BaseDOM Vite plugin.';
 
@@ -230,10 +233,16 @@ export function compileSfcToModule(source, filename = 'component.html', options 
   const parts = extractSfcParts(source);
   const runtime = options.runtimeSpecifier || 'basedom/sfc.js';
   if (parts.hasInlineScript && !parts.isSetup) {
-    throw new Error(`Only <script setup> can be compiled inline. ${INLINE_SCRIPT_HINT}`);
+    throw reportDiagnostic('BD1015', 'Only <script setup> can be compiled inline.', {
+      file: filename,
+      hint: INLINE_SCRIPT_HINT
+    });
   }
   if (parts.scriptSrc && parts.hasInlineScript) {
-    throw new Error('Use either <script setup src> or an inline <script setup>, not both.');
+    throw reportDiagnostic('BD1015', 'Use either <script setup src> or an inline <script setup>, not both.', {
+      file: filename,
+      hint: 'Keep one script block.'
+    });
   }
 
   let prelude = '';
@@ -254,14 +263,121 @@ export function compileSfcToModule(source, filename = 'component.html', options 
     ? '__setup'
     : `function __setup(props) {\n${body}\n  return { ${bindings.join(', ')} };\n}`;
 
-  return `import { defineSfc } from ${JSON.stringify(runtime)};
+  return `import { defineSfc, swapHmrElement } from ${JSON.stringify(runtime)};
 ${prelude}
-
-export default defineSfc({
+const __component = defineSfc({
   name: ${JSON.stringify(componentName(filename))},
   template: ${JSON.stringify(parts.template)},
   styles: ${JSON.stringify(parts.styles)},
   setup: ${setup}
 });
+let __exported = __component;
+if (import.meta.hot) {
+  let __current = __component;
+  const __instances = new Set();
+  __exported = (props) => {
+    const el = __current(props);
+    if (el && typeof el === 'object') {
+      el.__bdProps = props;
+      __instances.add(el);
+    }
+    return el;
+  };
+  import.meta.hot.accept((next) => {
+    const factory = next && next.__factory;
+    if (typeof factory !== 'function') {
+      import.meta.hot.invalidate();
+      return;
+    }
+    __current = factory;
+    for (const el of [...__instances]) {
+      if (!el.isConnected || !el.parentNode) {
+        __instances.delete(el);
+        continue;
+      }
+      try {
+        const fresh = factory(el.__bdProps || {});
+        if (!fresh || !fresh.parentNode && !el.parentNode) {
+          import.meta.hot.invalidate();
+          return;
+        }
+        swapHmrElement(el, fresh);
+        fresh.__bdProps = el.__bdProps;
+        __instances.delete(el);
+        __instances.add(fresh);
+      } catch (error) {
+        import.meta.hot.invalidate();
+        return;
+      }
+    }
+  });
+}
+export const __factory = __component;
+export default __exported;
 `;
+}
+
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+/**
+ * Static description of one SFC. Used by the Vite plugin's app graph.
+ * This is a scan of the source, not a full JavaScript parser.
+ * @param {string} source
+ * @param {string} [filename]
+ */
+export function describeSfc(source, filename = 'component.html') {
+  const parts = extractSfcParts(source);
+  const script = parts.inlineScript || '';
+  const template = parts.template || '';
+  const declared = [];
+  const propsBlock = script.match(/defineProps\s*\(\s*\{([\s\S]*?)\}\s*\)/);
+  if (propsBlock) {
+    const body = propsBlock[1].replace(/\{[^}]*\}/g, '');
+    for (const match of body.matchAll(/([A-Za-z_$][\w$]*)\s*:/g)) declared.push(match[1]);
+  }
+  const emits = [...script.matchAll(/\bemit\s*\(\s*['"]([^'"]+)['"]/g)].map((match) => match[1]);
+  const slots = [];
+  for (const match of template.matchAll(/<slot\b([^>]*)>/gi)) {
+    const named = match[1].match(/\bname\s*=\s*['"]([^'"]+)['"]/i);
+    slots.push(named ? named[1] : 'default');
+  }
+  for (const match of template.matchAll(/\bx-slot\s*=\s*['"]([^'"]+)['"]/gi)) slots.push(match[1]);
+  const models = [...template.matchAll(/\bx-model\s*=\s*['"]([^'"]+)['"]/gi)].map((match) => match[1]);
+  const passedProps = [...template.matchAll(/(?:^|\s):([A-Za-z_][\w-]*)\s*=/g)].map((match) => match[1]);
+  const listeners = [...template.matchAll(/(?:^|\s)@([A-Za-z_][\w-]*)\s*=/g)].map((match) => match[1]);
+  return {
+    file: filename,
+    name: componentName(filename),
+    bindings: extractSetupBindings(script),
+    props: unique(declared),
+    passedProps: unique(passedProps),
+    emits: unique(emits),
+    listeners: unique(listeners),
+    slots: unique(slots),
+    models: unique(models)
+  };
+}
+
+/**
+ * Best-effort route list from a JS source that calls defineRoute.
+ * Nested objects are not fully parsed. Paths are the quoted path: strings.
+ * @param {string} source
+ * @param {string} [filename]
+ */
+export function describeRoutes(source, filename = '') {
+  const text = String(source || '');
+  if (!text.includes('defineRoute')) return [];
+  const routes = [];
+  for (const match of text.matchAll(/path\s*:\s*(['"`])([^'"`]+)\1/g)) {
+    const around = text.slice(Math.max(0, match.index - 120), match.index + 240);
+    routes.push({
+      path: match[2],
+      file: filename,
+      lazy: /lazy\s*\(/.test(around),
+      load: /load\s*:/.test(around)
+    });
+  }
+  return routes;
 }

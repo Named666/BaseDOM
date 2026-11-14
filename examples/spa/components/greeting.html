@@ -1,0 +1,16 @@
+<template>
+  <article class="greet">
+    <h2>{{ name }}</h2>
+    <p class="theme">Theme: {{ theme }}</p>
+    <slot name="extra"></slot>
+    <button type="button" @click="ping">Ping</button>
+    <p class="local">Inside greeting</p>
+  </article>
+</template>
+
+<script setup src="./greeting.js"></script>
+
+<style>
+p { color: rgb(1, 2, 3); }
+.local { font-weight: 600; }
+</style>

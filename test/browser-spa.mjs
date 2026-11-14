@@ -121,6 +121,49 @@ try {
   };
   const home = await evalInPage(`document.querySelector('h1')?.textContent`);
   if (home !== 'Home') throw new Error(`Expected Home under script-src 'self', got ${home}`);
+  const greeting = await evalInPage(`({
+    name: document.querySelector('.greet h2')?.textContent,
+    slot: document.querySelector('.slot-copy')?.textContent,
+    theme: document.querySelector('.theme')?.textContent,
+    local: getComputedStyle(document.querySelector('.local')).color,
+    slotted: getComputedStyle(document.querySelector('.slot-copy')).color
+  })`);
+  if (greeting.name !== 'Visitor 0') throw new Error(`Expected greeting prop, got ${greeting.name}`);
+  if (greeting.slot !== '0 clicks so far') throw new Error(`Expected slot text, got ${greeting.slot}`);
+  if (greeting.theme !== 'Theme: plain') throw new Error(`Expected injected theme, got ${greeting.theme}`);
+  if (greeting.local === greeting.slotted) throw new Error(`Scoped CSS styled slotted content (${greeting.local})`);
+  await evalInPage(`document.querySelector('.greet button').click()`);
+  await sleep(50);
+  const ping = await evalInPage(`document.querySelector('.ping')?.textContent`);
+  if (ping !== 'Pinged Visitor 0') throw new Error(`Expected emit payload, got ${ping}`);
+  await evalInPage(`document.querySelector('a[href="#/notes"]').click()`);
+  let notesHeading = '';
+  for (let i = 0; i < 20; i += 1) {
+    notesHeading = await evalInPage(`document.querySelector('h1')?.textContent || ''`);
+    if (notesHeading === 'Notes') break;
+    await sleep(100);
+  }
+  const notes = await evalInPage(`({
+    h1: document.querySelector('h1')?.textContent,
+    body: document.querySelector('main')?.textContent || '',
+    header: document.querySelector('header strong')?.textContent
+  })`);
+  if (notes.h1 !== 'Notes') throw new Error(`Expected lazy Notes, got ${notes.h1}`);
+  if (!notes.body.includes('Loaded with the route')) throw new Error(`Expected route load data, got ${notes.body}`);
+  if (notes.header !== 'BaseDOM') throw new Error('Layout was replaced during notes navigation');
+  await evalInPage(`document.querySelector('a[href="#/boom"]').click()`);
+  await sleep(200);
+  const boom = await evalInPage(`({
+    alert: document.querySelector('[role="alert"]')?.textContent,
+    header: document.querySelector('header strong')?.textContent,
+    detail: document.querySelector('pre')?.textContent
+  })`);
+  if (boom.alert !== 'This screen failed.') throw new Error(`Expected boundary fallback, got ${boom.alert}`);
+  if (!String(boom.detail || '').includes('setup')) throw new Error(`Expected the screen error, got ${boom.detail}`);
+  if (boom.header !== 'BaseDOM') throw new Error('Layout unmounted when the screen threw');
+  const compositionShot = await send('Page.captureScreenshot', { format: 'png' });
+  fs.mkdirSync('/opt/cursor/artifacts', { recursive: true });
+  fs.writeFileSync('/opt/cursor/artifacts/basedom-composition.png', Buffer.from(compositionShot.data, 'base64'));
   await evalInPage(`document.querySelector('a[href="#/contact"]').click()`);
   await sleep(250);
   const contact = await evalInPage(`({
@@ -144,7 +187,7 @@ try {
   const shot = await send('Page.captureScreenshot', { format: 'png' });
   fs.mkdirSync('/opt/cursor/artifacts', { recursive: true });
   fs.writeFileSync('/opt/cursor/artifacts/basedom-contact.png', Buffer.from(shot.data, 'base64'));
-  console.log(JSON.stringify({ home, contact, error }));
+  console.log(JSON.stringify({ home, greeting, ping, notes, boom, contact, error }));
 } finally {
   ws.close();
   chrome.kill();

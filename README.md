@@ -2,11 +2,11 @@
 
 BaseDOM is a small reactive UI library. You write HTML, and signals update the real DOM. There is no virtual DOM and no runtime dependency.
 
-It is closer to Solid than to React: a component runs once, and a binding writes to the text node or attribute that read the signal. The file format is closer to a Vue single-file component, so it can load in the browser without a build. It is not Angular: there is no dependency injection, compiler, or platform.
+It is closer to Solid than to React: a component runs once, and a binding writes to the text node or attribute that read the signal. The file format is closer to a Vue single-file component, so it can load in the browser without a build. Shared values use `provide` / `inject` on the component tree. That is not a dependency-injection container.
 
 Vue's stable 3.5 runtime still diffs virtual nodes. Vue's no-VDOM mode (Vapor) is opt-in and, as of November 2026, still in the 3.6 release candidates. BaseDOM does not include either runtime. See [docs/design.md](docs/design.md). Nothing in this repository is a performance claim.
 
-The tested surface is signals, lifecycle cleanup, HTML templates (`x-if`, `x-for`, `x-model`, events, text), and `.html` components. The router, store, form helpers, and fetch/HTML swap are still in the package and are not part of that tested surface. Known gaps are in [docs/limitations.md](docs/limitations.md).
+The tested surface is signals, lifecycle cleanup, props, events, slots, provide/inject, watchers, async resources, error boundaries, HTML templates (`x-if`, `x-for`, `x-model`, events, text), `.html` components, and the router's layout, lazy screens, and cancellable `load()`. The store, form builders, and fetch/HTML swap are still in the package and are not part of that tested surface. Known gaps are in [docs/limitations.md](docs/limitations.md).
 
 ## Philosophy
 
@@ -37,7 +37,7 @@ npm test
 npm run example
 ```
 
-Open `http://127.0.0.1:4173/examples/spa/` for the two-screen app. Each screen is an `.html` file. Its script is a module beside the file (`<script setup src>`), so the browser loads it and the HTML is not evaluated. `examples/no-build/` is a single screen with no router.
+Open `http://127.0.0.1:4173/examples/spa/` for the multi-screen app. Each screen is an `.html` file. Its script is a module beside the file (`<script setup src>`), so the browser loads it and the HTML is not evaluated. Home renders a child with a prop, an event, a slot, and injected theme. Notes is a lazy screen with `load()`. Boom shows the layout's error boundary. `examples/no-build/` is a single screen with no router.
 
 ```js
 import { loadComponent } from '../../sfc.js';

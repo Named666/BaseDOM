@@ -40,6 +40,7 @@ export {
   signal,
   computed,
   effect,
+  watch,
   batch,
   createOwner,
   disposeOwner,
@@ -48,6 +49,8 @@ export {
   isSignal,
   unwrapSignal
 } from './state.js';
+export { provide, inject } from './context.js';
+export { createResource } from './resource.js';
 export * from './html.js';
 export * from './render.js';
 export * from './router.js';

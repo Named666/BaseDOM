@@ -1,6 +1,6 @@
 // navigation.js
 
-import { renderRoute, escapeHtml, rootElementSelector, setCurrentView } from './render.js';
+import { renderRoute, abortActiveRouteLoad, escapeHtml, rootElementSelector, setCurrentView } from './render.js';
 import { findMatchingRoute, parseQuery } from './router.js';
 import { renderComponent, createComponent } from './components.js';
 import { signal } from './state.js';
@@ -139,6 +139,7 @@ function writeBrowserRoute(path, replace) {
 // --- Navigation ---
 export function navigate(path, options = {}) {
   const version = ++navigationVersion;
+  abortActiveRouteLoad();
   const job = navigationQueue.then(() => navigateNow(path, options, version));
   navigationQueue = job.then(() => {}, () => {});
   return job;
@@ -174,8 +175,8 @@ async function navigateNow(path, { replace = false, triggeredByPopstate = false 
 
     setPendingNavigation(path);
 
-    await renderRoute(path);
-    if (stale()) return;
+    const rendered = await renderRoute(path, { isCurrent: () => version === navigationVersion });
+    if (stale() || (rendered && rendered.dropped)) return;
     if (!triggeredByPopstate) writeBrowserRoute(path, replace);
     // Update the `currentRoute` signal so future popstate handlers know the origin
     setCurrentRoute(path);

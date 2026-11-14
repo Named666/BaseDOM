@@ -5,6 +5,7 @@
 // there, and assign to signals. They cannot reach window, document, or Function.
 
 import { isSignal, unwrapSignal } from './state.js';
+import { reportDiagnostic } from './diagnostics.js';
 
 export class ExpressionError extends Error {
   constructor(message) {
@@ -321,11 +322,28 @@ function assertSafeKey(key) {
   return normalized;
 }
 
+export const SCOPE_PARENT = Symbol.for('basedom.scopeParent');
+
+/**
+ * A template scope that can see `parent` names without copying them.
+ * Slot content uses this so it keeps the parent's signals.
+ * @param {object} parent
+ */
+export function childScope(parent) {
+  const scope = Object.create(null);
+  if (parent) scope[SCOPE_PARENT] = parent;
+  return scope;
+}
+
 function lookup(context, name) {
   if (BLOCKED_IDENTIFIERS.has(name)) {
     throw new ExpressionError(`Unsafe identifier "${name}"`);
   }
-  if (context && Object.prototype.hasOwnProperty.call(context, name)) return context[name];
+  let current = context;
+  while (current && current !== Object.prototype) {
+    if (Object.prototype.hasOwnProperty.call(current, name)) return current[name];
+    current = current[SCOPE_PARENT];
+  }
   if (Object.prototype.hasOwnProperty.call(SAFE_GLOBALS, name)) return SAFE_GLOBALS[name];
   return undefined;
 }
@@ -431,13 +449,13 @@ function evalAssign(node, context) {
   const name = node.target.name;
   if (BLOCKED_IDENTIFIERS.has(name)) throw new ExpressionError(`Unsafe identifier "${name}"`);
   const value = evalAst(node.right, context);
-  const raw = context && Object.prototype.hasOwnProperty.call(context, name) ? context[name] : undefined;
+  const raw = lookup(context, name);
   if (isSignal(raw)) {
     raw.set(value);
     return value;
   }
   const setterName = `set${name.charAt(0).toUpperCase()}${name.slice(1)}`;
-  const setter = context && Object.prototype.hasOwnProperty.call(context, setterName) ? context[setterName] : undefined;
+  const setter = lookup(context, setterName);
   if (typeof setter === 'function' && !isSignal(setter)) {
     setter(value);
     return value;
@@ -467,7 +485,10 @@ export function evaluateExpression(expression, context, options = {}) {
     return evaluateParsed(expression, context);
   } catch (error) {
     if (options.throw) throw error;
-    console.error(`[BaseDOM] expression failed: ${expression}`, error);
+    reportDiagnostic('BD1001', `expression failed: ${expression}`, {
+      expression: String(expression),
+      hint: 'Check the template expression. It can read context names, call functions you returned, and assign to signals.'
+    });
     return undefined;
   }
 }
