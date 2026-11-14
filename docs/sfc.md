@@ -124,7 +124,7 @@ Do not pass `window`, `document`, or broad objects in that context. The expressi
 
 `loadComponent` must not be pointed at untrusted HTML. A hostile file could set `src` to another same-origin module.
 
-`raw()` and the fetch swap attributes insert HTML. They are a different, trusted-HTML path and are outside this milestone. See [limitations](./limitations.md).
+`import 'basedom/fetch'` swaps a response into the page through `renderServerTemplate`. Scripts, `on*` handlers, and `javascript:` URLs are removed. `raw()` still inserts trusted HTML and skips that pass.
 
 ## Expressions
 

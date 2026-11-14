@@ -60,6 +60,24 @@ function add(event) {
 }
 ```
 
+## Directives
+
+These are the directives in the screen runtime. `{{ name }}` writes text. `:attr` and `x-bind:attr` write an attribute. `:class` and `:style` do the same for those two attributes. A class or style value that is an object is applied as a map (`{ ready: true }` turns on the `ready` class). Template expressions do not include object literals, so a map is passed from JavaScript.
+
+| Directive | What it does |
+| --- | --- |
+| `x-if` / `x-else` | Keep or drop the element |
+| `x-for` / `x-key` | Repeat an element. `x-key` keeps the same DOM node for a row |
+| `x-show` | Sets `display` to `none` while the value is false |
+| `x-on:click` / `@click` | DOM listener on an element. The handler receives the event |
+| `x-bind:src` / `:src` | Attribute binding |
+| `x-model` | Reads and writes a signal on a text, checkbox, radio, select, or number control |
+| `x-ref` | Stores the element on the context under that name |
+| `x-mount` / `x-unmount` / `x-update` | Lifecycle hooks |
+| `x-slot` / `slot` | Named slot content and the slot outlet |
+
+`@name` on a component tag is `emit`, not a DOM listener. `@click` on an element inside the template is the DOM listener. There is no `.prevent` or `.stop` modifier. Call `event.preventDefault()` in the handler. `x-text`, `x-html`, `x-cloak`, `x-once`, and `x-transition` are not part of this set. Server HTML goes through the fetch swap below, which strips scripts instead of interpreting `x-html`.
+
 `x-if`, `x-else`, `x-show`, and `x-for` are the control flow. A list that can reorder needs `x-key`:
 
 ```html
@@ -166,6 +184,30 @@ Put the more specific `todo/:id` route before `:filter`, because the first match
 `watch(source, (next, prev, onCleanup) => {}, { immediate })` reruns when the source changes and runs the previous cleanup first.
 
 `x-boundary` catches errors thrown while rendering, and errors thrown by effects. It does not catch event handlers or timers.
+
+## Server-driven HTML
+
+Import the fetch layer when a click or a submit should replace part of the page with HTML from the server. It is not loaded by a screen that never imports it.
+
+```js
+import 'basedom/fetch';
+```
+
+```html
+<button type="button" x-get="/api/note" x-target="#panel" x-indicator="#status">Load</button>
+<form x-post="/api/save" x-target="#panel" x-encoding="json">
+  <input name="title" x-model="title">
+  <button type="submit">Save</button>
+</form>
+<p id="status">Ready</p>
+<div id="panel"></div>
+```
+
+`x-get`, `x-post`, `x-put`, `x-patch`, and `x-delete` are the request. `x-target` is a selector or `this`. `x-swap` is `innerHTML` (the default), `outerHTML`, `textContent`, `beforeend`, `afterbegin`, `beforebegin`, `afterend`, `delete`, or `none`. `x-select` keeps one element from the response. An element in the response with `x-swap-oob` updates somewhere else on the page. `x-indicator` receives the class `x-requesting` while the request is open. The target's `data-fetch-state` is `loading`, `idle`, or `error`.
+
+The response is rendered the same way as `renderServerTemplate`. Scripts, `on*` handlers, and `javascript:` URLs are removed. `{{ name }}`, `@click`, and the other directives inside the fragment run with the component's context. The previous fragment's effects are disposed. A newer request for the same element aborts the one still running, and unmounting the trigger aborts it too. `x-push-url` and `x-replace-url` call `navigate` after a successful swap. `x-inherit` lists attributes a child may copy from an ancestor. Verbs are not copied onto a submit button just because the form has them.
+
+`examples/fetch` is that page. `fetchAndSwap(url, options)` is the same operation without a directive. `installFetch()` registers the directives if you imported `basedom/fetch.js` alone.
 
 ## Dev and build
 

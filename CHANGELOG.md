@@ -29,7 +29,8 @@
 
 - `@name` on a component tag is a component event. It is no longer forwarded as a native listener on the root.
 - Scoped CSS no longer matches slotted content.
-- Removed `createForm`, `Form`, `Field`, `Submit`, `validation.js`, `store.js`, `fetch.js`, `fetch-directives.js`, and the `directives.js` entry that loaded them. A form is `x-model` and the screen's submit function. Shared state is a module of signals.
+- Removed `createForm`, `Form`, `Field`, `Submit`, `validation.js`, and `store.js`. A form is `x-model` and the screen's submit function. Shared state is a module of signals.
+- `import 'basedom/fetch'` registers the HTML-swap directives (`x-get`, `x-post`, `x-put`, `x-patch`, `x-delete`). The screen runtime does not import that module. Response HTML goes through `renderServerTemplate`.
 - Removed `startApp`, the `window.signal` / `window.computed` / `window.effect` globals, `getHMRProxy`, and the `basedom:hmr` window event. Mount a component or call `startRouter` yourself. Vite HMR updates `.html` screens directly.
 
 ## 0.4.0

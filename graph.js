@@ -227,6 +227,7 @@ export function analyzeSfc(source, filename = 'component.html') {
     injects,
     resources,
     models: templateInfo.models,
+    fetches: templateInfo.fetches,
     uses: templateInfo.uses,
     signals,
     bindings: collectBindings(ast),
@@ -261,9 +262,12 @@ function collectPattern(id, names) {
   if (id.type === 'ObjectPattern') id.properties.forEach((prop) => collectPattern(prop.value || prop.argument, names));
 }
 
+const FETCH_VERBS = new Set(['x-get', 'x-post', 'x-put', 'x-patch', 'x-delete']);
+
 function scanTemplate(template, file, base, fullSource) {
   const slots = [];
   const models = [];
+  const fetches = [];
   const uses = [];
   const text = String(template || '');
   let i = 0;
@@ -336,6 +340,19 @@ function scanTemplate(template, file, base, fullSource) {
     }
     for (const attr of attrs) {
       if (attr.name === 'x-model') models.push({ expression: attr.value, loc: attr.loc });
+      if (FETCH_VERBS.has(attr.name)) {
+        const target = attrs.find((item) => item.name === 'x-target');
+        const swap = attrs.find((item) => item.name === 'x-swap');
+        const url = attr.value || '';
+        fetches.push({
+          method: attr.name.slice(2).toUpperCase(),
+          url: url || null,
+          unresolved: !url || url.includes('{{') || url.includes('{'),
+          target: target ? target.value : null,
+          swap: swap ? (swap.value || 'innerHTML') : 'innerHTML',
+          loc: attr.loc
+        });
+      }
     }
     if (!HTML_TAGS.has(tag.toLowerCase())) {
       uses.push({
@@ -354,7 +371,7 @@ function scanTemplate(template, file, base, fullSource) {
       });
     }
   }
-  return { slots, models, uses };
+  return { slots, models, uses, fetches };
 }
 
 function readProperty(node, name) {

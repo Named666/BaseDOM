@@ -12,6 +12,8 @@
     "components.js",
     "directives-core.js",
     "expression.js",
+    "fetch.js",
+    "fetch-directives.js",
     "html.js",
     "index.js",
     "lifecycle.js",
@@ -53,6 +55,8 @@
     "./registry.js": "./registry.js",
     "./navigation.js": "./navigation.js",
     "./render.js": "./render.js",
+    "./fetch": "./fetch-directives.js",
+    "./fetch.js": "./fetch.js",
     "./vite": "./vite/plugin.js"
   },
   "scripts": {

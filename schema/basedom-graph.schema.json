@@ -46,6 +46,7 @@
         "injects": { "type": "array" },
         "resources": { "type": "array" },
         "models": { "type": "array" },
+        "fetches": { "type": "array" },
         "uses": { "type": "array" },
         "signals": { "type": "array" },
         "bindings": { "type": "array" },

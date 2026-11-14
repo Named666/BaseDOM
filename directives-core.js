@@ -263,12 +263,12 @@ export const xOnDirective = {
                 // Always attach using normalized event name (lowercase)
                 let propEventName = `on${eventName}`;
                 props[propEventName] = (event) => {
-                    const eventContext = {
-                        ...context,
-                        $event: event,
-                        $target: event.target,
-                        $currentTarget: event.currentTarget
-                    };
+                const eventContext = {
+                    ...context,
+                    $event: event,
+                    $target: event && event.target,
+                    $currentTarget: event && event.currentTarget
+                };
                     // Always evaluate the handler expression on every event
                     const result = evaluateExpression(handlerExpr, eventContext);
                     if (typeof result === 'function') {
