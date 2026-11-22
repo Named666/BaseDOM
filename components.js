@@ -115,8 +115,20 @@ function applyAttribute(el, key, value, effectsToCleanup) {
     if (el[handlerProp]) el.removeEventListener(eventName, el[handlerProp]);
     const wrapped = (event) => {
       const owner = ownerForElement(el);
-      if (owner) return runWithOwner(owner, () => value(event));
-      return value(event);
+      try {
+        if (owner) return runWithOwner(owner, () => value(event));
+        return value(event);
+      } catch (error) {
+        let current = owner;
+        while (current) {
+          if (typeof current.boundary === 'function') {
+            current.boundary(error);
+            return;
+          }
+          current = current.parent;
+        }
+        throw error;
+      }
     };
     el.addEventListener(eventName, wrapped);
     el[handlerProp] = wrapped;

@@ -110,6 +110,20 @@ function componentListener(props, name) {
  * @param {string} name
  * @param {*} [payload]
  */
+/**
+ * Publishes the values a parent x-ref should see instead of the root element.
+ * @param {object} exposed
+ */
+export function defineExpose(exposed) {
+  const owner = getCurrentOwner();
+  if (!owner) {
+    throw reportDiagnostic('BD1008', 'defineExpose() must run during setup', {
+      hint: 'Call defineExpose() inside setup(), next to defineProps().'
+    });
+  }
+  owner.exposed = exposed || {};
+}
+
 export function emit(name, payload) {
   const owner = getCurrentOwner();
   if (!owner) {
@@ -257,6 +271,7 @@ export function defineSfc({ template = '', styles = '', setup, name } = {}) {
       const element = runWithOwner(owner, () => renderParts(template, styles, context, bindComponentOwner(owner)));
       if (element instanceof HTMLElement) {
         element.__basedomOwner = owner;
+        if (owner.exposed) element.__basedomExposed = owner.exposed;
         if (name && !element.hasAttribute('data-basedom-component')) {
           element.setAttribute('data-basedom-component', name);
         }
