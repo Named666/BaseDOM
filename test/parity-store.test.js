@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { effect } from '../state.js';
+import { createOwner, effect, ownedTimeout, runWithOwner } from '../state.js';
 import { createStore, produce, readonly } from '../store.js';
+import { createResource } from '../resource.js';
 import { Show, For, Suspense } from '../control.js';
 import { signal } from '../state.js';
 import { defineRoute, resetRoutes } from '../router.js';
@@ -61,6 +62,34 @@ describe('store and helpers', () => {
     shown.remove();
     list.remove();
     suspense.remove();
+  });
+
+  it('suspends while a resource created in the subtree is loading', async () => {
+    let release;
+    const pending = new Promise((resolve) => { release = resolve; });
+    const host = Suspense({
+      fallback: () => document.createTextNode('wait'),
+      children: () => {
+        createResource(() => pending);
+        return document.createTextNode('ready');
+      }
+    });
+    document.body.appendChild(host);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(host.textContent, 'wait');
+    release('ok');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(host.textContent, 'ready');
+    host.remove();
+  });
+
+  it('reports a timer error to the boundary', async () => {
+    let caught = null;
+    const owner = createOwner();
+    owner.boundary = (error) => { caught = error; };
+    runWithOwner(owner, () => { ownedTimeout(() => { throw new Error('timer'); }, 5); });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(caught && caught.message, 'timer');
   });
 });
 

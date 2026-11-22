@@ -2,7 +2,7 @@
 // They are not part of the screen runtime, so a counter that never imports them
 // does not ship them.
 
-import { effect } from './state.js';
+import { createOwner, effect, runWithOwner, signal } from './state.js';
 import { getComponent } from './registry.js';
 
 function paint(host, node) {
@@ -84,9 +84,22 @@ export function ErrorBoundary({ fallback, children }) {
 }
 
 export function Suspense({ resource, fallback, children }) {
-  return Show({
-    when: () => !(resource && resource.loading && resource.loading()),
-    children,
-    fallback
+  const host = document.createElement('div');
+  const owner = createOwner();
+  const tick = signal(0);
+  owner.suspense = { pending: new Set(), tick };
+  let view;
+  let started = false;
+  effect(() => {
+    tick[0]();
+    if (!started) {
+      started = true;
+      runWithOwner(owner, () => {
+        view = typeof children === 'function' ? children() : children;
+      });
+    }
+    const waiting = owner.suspense.pending.size > 0 || (resource && resource.loading && resource.loading());
+    paint(host, waiting ? (typeof fallback === 'function' ? fallback() : fallback) : view);
   });
+  return host;
 }

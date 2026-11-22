@@ -36,6 +36,36 @@ export function setRouteStatusText(text = {}) {
   routeStatusText = { ...routeStatusText, ...text };
 }
 
+function cleanPathFrom(matched) {
+  return matched.map((entry) => entry.route.path).join('/');
+}
+
+function keepAliveMount(outlet, key, renderLeaf) {
+  const cache = outlet.__basedomKeep || (outlet.__basedomKeep = new Map());
+  const max = Number(outlet.getAttribute('x-keep-max') || 8);
+  const include = (outlet.getAttribute('x-keep-include') || '').split(',').map((item) => item.trim()).filter(Boolean);
+  if (include.length && !include.some((item) => key.includes(item))) {
+    mount(renderLeaf, outlet);
+    return;
+  }
+  for (const child of [...outlet.children]) child.style.display = 'none';
+  let node = cache.get(key);
+  if (!node) {
+    node = document.createElement('div');
+    node.setAttribute('data-keep-key', key);
+    mount(renderLeaf, node);
+    cache.set(key, node);
+    while (cache.size > max) {
+      const oldest = cache.keys().next().value;
+      const dropped = cache.get(oldest);
+      cache.delete(oldest);
+      if (dropped && dropped.parentNode) dropped.remove();
+    }
+  }
+  if (node.parentNode !== outlet) outlet.appendChild(node);
+  node.style.display = '';
+}
+
 function statusNode(state, error) {
   const p = document.createElement('p');
   p.setAttribute('data-route-state', state);
@@ -208,7 +238,9 @@ async function paintMatched(matched, params, query, extras, leafOverride) {
     const leaf = matched[matched.length - 1];
     try {
       const componentFn = await resolveComponent(leaf.route.componentFn);
-      mount(() => componentFn(routeProps(leaf, params, query, extras, undefined, true)), outlet);
+      const renderLeaf = () => componentFn(routeProps(leaf, params, query, extras, undefined, true));
+      if (outlet.hasAttribute('x-keep-alive')) keepAliveMount(outlet, leaf.route.path || cleanPathFrom(matched), renderLeaf);
+      else mount(renderLeaf, outlet);
     } catch (error) {
       if (outlet.__basedomBoundary) {
         outlet.__basedomBoundary(error);

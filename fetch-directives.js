@@ -10,7 +10,7 @@ const FETCH_ATTRS = [
   ...VERBS,
   'x-swap', 'x-select', 'x-select-oob', 'x-trigger', 'x-target',
   'x-headers', 'x-params', 'x-include', 'x-vals', 'x-encoding',
-  'x-confirm', 'x-indicator', 'x-timeout', 'x-push-url', 'x-replace-url'
+  'x-confirm', 'x-indicator', 'x-timeout', 'x-push-url', 'x-replace-url', 'x-boost', 'x-sync'
 ];
 
 let installed = false;
@@ -38,6 +38,28 @@ function readValue(raw, context) {
   } catch {
     try { return JSON.parse(raw); } catch { return raw; }
   }
+}
+
+function parseTime(value) {
+  const text = String(value || '0');
+  if (text.endsWith('ms')) return parseFloat(text) || 0;
+  if (text.endsWith('s')) return (parseFloat(text) || 0) * 1000;
+  return parseFloat(text) || 0;
+}
+
+function parseTrigger(raw) {
+  const spec = { event: 'click', every: 0, delay: 0, throttle: 0, from: null, load: false, revealed: false, changed: false };
+  for (const part of String(raw || 'click').split(/\s+/)) {
+    if (part === 'load') spec.load = true;
+    else if (part === 'revealed' || part === 'intersect') spec.revealed = true;
+    else if (part === 'changed') spec.changed = true;
+    else if (part.startsWith('every:')) spec.every = parseTime(part.slice(6));
+    else if (part.startsWith('delay:')) spec.delay = parseTime(part.slice(6));
+    else if (part.startsWith('throttle:')) spec.throttle = parseTime(part.slice(9));
+    else if (part.startsWith('from:')) spec.from = part.slice(5);
+    else if (!part.includes(':')) spec.event = part;
+  }
+  return spec;
 }
 
 function indicatorNodes(selector) {
@@ -68,7 +90,7 @@ export const FetchDirective = {
       if (value == null || value.trim().toLowerCase() === 'null') continue;
       config[name] = value;
     }
-    if (!VERBS.some((name) => config[name])) return;
+    if (!VERBS.some((name) => config[name]) && config['x-boost'] == null) return;
 
     const previousMount = props.onMount;
     const previousUnmount = props.onUnmount;
@@ -83,10 +105,10 @@ export const FetchDirective = {
         : config['x-delete'] ? 'DELETE'
         : 'GET';
       const url = config[`x-${method.toLowerCase()}`];
-      if (!url) return;
       const tag = element.tagName.toLowerCase();
       const trigger = config['x-trigger']
         || ((tag === 'form' && method !== 'GET') ? 'submit' : 'click');
+      if (!url && config['x-boost'] == null) return;
 
       const handler = async (event) => {
         const confirmValue = config['x-confirm'] ? readValue(config['x-confirm'], context) : true;
@@ -143,7 +165,7 @@ export const FetchDirective = {
         const timeoutController = new AbortController();
         const timer = timeout > 0 ? setTimeout(() => timeoutController.abort(), timeout) : 0;
         try {
-          const result = await fetchAndSwap(requestUrl, {
+          const runFetch = () => fetchAndSwap(requestUrl, {
             method,
             headers,
             body,
@@ -153,13 +175,37 @@ export const FetchDirective = {
             context,
             signal: timeoutController.signal
           });
+          let result;
+          if (config['x-sync'] === 'queue') {
+            const previous = target.__basedomFetchQueue || Promise.resolve();
+            let release = () => {};
+            target.__basedomFetchQueue = new Promise((resolve) => { release = resolve; });
+            await previous;
+            try { result = await runFetch(); } finally { release(); }
+          } else result = await runFetch();
           if (result && result.ok) {
+            const redirect = result.headers && (result.headers['hx-redirect'] || result.headers['x-redirect']);
+            const fired = result.headers && (result.headers['hx-trigger'] || result.headers['x-trigger']);
+            if (redirect || fired) {
+              if (redirect) {
+                const nav = await import('./navigation.js');
+                nav.navigate(redirect);
+              }
+              if (fired) {
+                for (const name of String(fired).split(',')) {
+                  element.dispatchEvent(new CustomEvent(name.trim(), { bubbles: true }));
+                }
+              }
+            }
             const push = config['x-push-url'];
             const replace = config['x-replace-url'];
             if ((push && push !== 'false') || (replace && replace !== 'false')) {
               const nav = await import('./navigation.js');
               if (push && push !== 'false') nav.navigate(push === 'true' ? url : push);
               else nav.navigate(replace === 'true' ? url : replace, { replace: true });
+              try {
+                history.replaceState({ ...(history.state || {}), basedomHtml: target.innerHTML, basedomTarget: config['x-target'] || '' }, '');
+              } catch { /* history restore is best-effort */ }
             }
           }
         } finally {
@@ -168,9 +214,51 @@ export const FetchDirective = {
         }
       };
 
-      if (attached) element.removeEventListener(attached.trigger, attached.handler);
-      element.addEventListener(trigger, handler);
-      attached = { element, trigger, handler };
+      const spec = parseTrigger(trigger);
+      const listenTo = spec.from ? (document.querySelector(spec.from) || element) : element;
+      const fire = (event) => {
+        const go = () => handler(event || { preventDefault() {}, target: element });
+        if (spec.throttle) {
+          const now = Date.now();
+          if (now - (element.__basedomThrottle || 0) < spec.throttle) return;
+          element.__basedomThrottle = now;
+        }
+        if (spec.delay) setTimeout(go, spec.delay);
+        else go();
+      };
+      if (spec.load) fire();
+      if (spec.every) {
+        const id = setInterval(fire, spec.every);
+        const prior = element.__onUnmount;
+        element.__onUnmount = (...args) => { clearInterval(id); if (typeof prior === 'function') prior(...args); };
+      }
+      if (spec.revealed && typeof IntersectionObserver === 'function') {
+        const observer = new IntersectionObserver((entries) => {
+          if (entries.some((entry) => entry.isIntersecting)) fire();
+        });
+        observer.observe(listenTo);
+      }
+      if (spec.changed) listenTo.addEventListener('change', fire);
+      if (!spec.load && !spec.every && !spec.revealed && !spec.changed) {
+        listenTo.addEventListener(spec.event, fire);
+        attached = { element: listenTo, trigger: spec.event, handler: fire };
+      }
+      if (config['x-boost'] != null) {
+        element.addEventListener('click', (event) => {
+          const link = event.target && event.target.closest && event.target.closest('a[href]');
+          if (!link || !element.contains(link)) return;
+          event.preventDefault();
+          const host = config['x-target'] ? document.querySelector(config['x-target']) : element;
+          fetchAndSwap(link.getAttribute('href'), { method: 'GET', targetElement: host, swap: config['x-swap'], context });
+        });
+        element.addEventListener('submit', (event) => {
+          const form = event.target;
+          if (!form || form.tagName !== 'FORM') return;
+          event.preventDefault();
+          const host = config['x-target'] ? document.querySelector(config['x-target']) : element;
+          fetchAndSwap(form.getAttribute('action') || url, { method: (form.getAttribute('method') || 'GET').toUpperCase(), targetElement: host, context });
+        });
+      }
     };
 
     props.onUnmount = (element) => {
@@ -198,6 +286,18 @@ export function installFetch() {
   // One registration. The parser runs every registered directive on every node,
   // so registering this object under each verb would fire the request five times.
   registerDirective('x-get', FetchDirective);
+  if (typeof window !== 'undefined' && !window.__BASEDOM_FETCH_POP__) {
+    window.__BASEDOM_FETCH_POP__ = true;
+    window.addEventListener('popstate', () => {
+      const state = history.state;
+      if (!state || !state.basedomHtml) return;
+      const host = state.basedomTarget ? document.querySelector(state.basedomTarget) : null;
+      if (!host) return;
+      import('./sfc.js').then(({ renderServerTemplate }) => {
+        host.replaceChildren(renderServerTemplate(state.basedomHtml, {}));
+      });
+    });
+  }
 }
 
 installFetch();

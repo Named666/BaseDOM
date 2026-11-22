@@ -277,6 +277,43 @@ export function effect(fn) {
  * @param {Function} fn
  * @returns {Function}
  */
+/** Registers a promise with the nearest Suspense owner, if one is rendering. */
+export function trackSuspense(promise) {
+  let owner = getCurrentOwner();
+  while (owner && !owner.suspense) owner = owner.parent;
+  if (!owner || !promise || typeof promise.finally !== 'function') return promise;
+  const suspense = owner.suspense;
+  suspense.pending.add(promise);
+  suspense.tick[1]((value) => value + 1);
+  promise.finally(() => {
+    suspense.pending.delete(promise);
+    suspense.tick[1]((value) => value + 1);
+  });
+  return promise;
+}
+
+/** Timer whose errors are reported to the owning x-boundary. */
+export function ownedTimeout(fn, ms) {
+  const owner = getCurrentOwner();
+  const id = setTimeout(() => {
+    try {
+      fn();
+    } catch (error) {
+      let current = owner;
+      while (current) {
+        if (typeof current.boundary === 'function') {
+          current.boundary(error);
+          return;
+        }
+        current = current.parent;
+      }
+      throw error;
+    }
+  }, ms);
+  try { onCleanup(() => clearTimeout(id)); } catch { /* the caller can clear the id */ }
+  return id;
+}
+
 export function createMemo(fn) {
   return computed(fn);
 }

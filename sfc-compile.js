@@ -257,9 +257,15 @@ export function compileSfcToModule(source, filename = 'component.html', options 
     bindings = [...new Set([...imported, ...local])];
   }
 
+  const optionalImports = [];
   if (/\bx-(?:get|post|put|patch|delete|boost)\b/.test(parts.template || '')) {
-    const fetchRuntime = runtime.replace(/sfc\.js$/, 'fetch-directives.js');
-    prelude = `import ${JSON.stringify(fetchRuntime)};\n${prelude}`;
+    optionalImports.push(runtime.replace(/sfc\.js$/, 'fetch-directives.js'));
+  }
+  if (/\bx-(?:text|html|cloak|once|pre|memo|teleport|transition|move|keep-alive)\b|<x-component\b|x-model[.:]|@[^\s"'=]*\.|x-on:[^\s"'=]*\.|(?<!\{)\{(?!\{)/i.test(parts.template || '')) {
+    optionalImports.push(runtime.replace(/sfc\.js$/, 'directives-parity.js'));
+  }
+  if (optionalImports.length) {
+    prelude = `${optionalImports.map((spec) => `import ${JSON.stringify(spec)};`).join('\n')}\n${prelude}`;
   }
   const registered = registerHtmlComponents(prelude, runtime);
   prelude = registered.prelude;

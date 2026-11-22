@@ -4,6 +4,7 @@ import { signal } from '../state.js';
 import { defineSfc, defineExpose, emit } from '../sfc.js';
 import { mount } from '../components.js';
 import { registerComponent } from '../registry.js';
+import '../directives-parity.js';
 
 function place(view) {
   const host = document.createElement('div');
@@ -95,6 +96,47 @@ describe('directive parity', () => {
     assert.equal(host.querySelector('p'), null);
     host.remove();
     dock.remove();
+  });
+
+  it('applies stop, self, once, ctrl, lazy, trim, and a named model', async () => {
+    const [text, setText] = signal('  Ada  ');
+    const [title, setTitle] = signal('A');
+    let clicks = 0;
+    let parentClicks = 0;
+    const Child = defineSfc({
+      template: '<button type="button" id="child" @click="send">Child</button>',
+      setup(props) {
+        return { send() { emit('update:title', props.title() + '!'); } };
+      }
+    });
+    await registerComponent('named', Child);
+    const host = place(defineSfc({
+      template: '<div id="box" @click="parent"><button type="button" id="stop" @click.stop="add">Stop</button></div><input id="lazy" x-model.lazy.trim="text"><button type="button" id="self" @click.self="add">Self</button><button type="button" id="once" @click.once="add">Once</button><input id="key" @keydown.ctrl.enter="add"><named :title="title" x-model:title="title"></named><p id="out">{{ title }}</p>',
+      setup: () => ({
+        text, setText, title, setTitle,
+        add() { clicks += 1; },
+        parent() { parentClicks += 1; }
+      })
+    }));
+    host.querySelector('#stop').click();
+    assert.equal(clicks, 1);
+    assert.equal(parentClicks, 0);
+    const lazy = host.querySelector('#lazy');
+    lazy.value = '  Bea  ';
+    lazy.dispatchEvent(new Event('input', { bubbles: true }));
+    assert.equal(text(), '  Ada  ');
+    lazy.dispatchEvent(new Event('change', { bubbles: true }));
+    assert.equal(text(), 'Bea');
+    host.querySelector('#once').click();
+    host.querySelector('#once').click();
+    assert.equal(clicks, 2);
+    const key = host.querySelector('#key');
+    key.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    key.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }));
+    assert.equal(clicks, 3);
+    host.querySelector('#child').click();
+    assert.equal(host.querySelector('#out').textContent, 'A!');
+    host.remove();
   });
 
   it('exposes a component ref and binds a named model', async () => {

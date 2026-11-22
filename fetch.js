@@ -21,10 +21,35 @@ function ownerForElement(element) {
   return null;
 }
 
+function parseTime(value) {
+  const text = String(value || '0');
+  if (text.endsWith('ms')) return parseFloat(text) || 0;
+  if (text.endsWith('s')) return (parseFloat(text) || 0) * 1000;
+  return parseFloat(text) || 0;
+}
+
 function parseSwap(spec) {
-  const token = String(spec || 'innerHTML').trim().split(/\s+/)[0] || 'innerHTML';
-  const style = token.toLowerCase();
-  return SWAP_MODES.has(style) ? style : 'innerhtml';
+  const parts = String(spec || 'innerHTML').trim().split(/\s+/).filter(Boolean);
+  const styleToken = parts[0] && !parts[0].includes(':') ? parts.shift().toLowerCase() : 'innerhtml';
+  const style = SWAP_MODES.has(styleToken) ? styleToken : 'innerhtml';
+  const extra = { style, swapDelay: 0, settleDelay: 0, show: null, scroll: null };
+  for (const part of parts) {
+    const [key, value] = part.split(':');
+    if (key === 'swap') extra.swapDelay = parseTime(value);
+    else if (key === 'settle') extra.settleDelay = parseTime(value);
+    else if (key === 'show') extra.show = value || 'top';
+    else if (key === 'scroll') extra.scroll = value || 'top';
+  }
+  return extra;
+}
+
+function applyMotion(target, extra) {
+  if (!extra) return;
+  if (extra.scroll === 'top') target.scrollTop = 0;
+  if (extra.scroll === 'bottom') target.scrollTop = target.scrollHeight;
+  if (extra.show === 'top' || extra.show === 'bottom') {
+    try { target.scrollIntoView({ block: extra.show === 'top' ? 'start' : 'end' }); } catch { /* optional */ }
+  }
 }
 
 function renderTrusted(html, context, target) {
@@ -189,7 +214,8 @@ export async function fetchAndSwap(url, options = {}) {
   const target = options.targetElement
     || (options.targetSelector ? document.querySelector(options.targetSelector) : null);
   if (!target) return { ok: false, error: 'No target element' };
-  const style = parseSwap(options.swap);
+  const swapSpec = parseSwap(options.swap);
+  const style = swapSpec.style;
   const ticket = claim(target, options.signal);
   setState(target, 'loading');
   let response;
@@ -218,10 +244,18 @@ export async function fetchAndSwap(url, options = {}) {
   if (!ticket.current()) return { ok: false, aborted: true };
   let html = pullOob(text, options.context);
   html = narrow(html, options.select);
+  if (swapSpec.swapDelay) await new Promise((resolve) => setTimeout(resolve, swapSpec.swapDelay));
+  if (!ticket.current()) return { ok: false, aborted: true };
   applyHtml(target, html, style, options.context);
+  if (swapSpec.settleDelay) await new Promise((resolve) => setTimeout(resolve, swapSpec.settleDelay));
+  applyMotion(target, swapSpec);
+  const headers = {};
+  if (response.headers && typeof response.headers.forEach === 'function') {
+    response.headers.forEach((value, key) => { headers[key.toLowerCase()] = value; });
+  }
   if (ticket.current()) {
     target.__basedomFetchAbort = null;
     setState(target, 'idle');
   }
-  return { ok: true, status: response.status };
+  return { ok: true, status: response.status, headers };
 }

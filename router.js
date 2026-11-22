@@ -1,6 +1,7 @@
 // router.js
 // Core router for SPA navigation and route matching
 import { renderRoute } from './render.js';
+import { getCurrentOwner, trackSuspense } from './state.js';
 import { attachLinkInterception, navigate, readBrowserRoute, setHistoryMode } from './navigation.js';
 
 export const routes = [];
@@ -79,8 +80,17 @@ export { defineRoute };
  * @param {() => Promise<*>} loader
  */
 export function lazy(loader) {
-  function LazyScreen() {
-    throw new Error('[BaseDOM BD1011] Lazy screen was rendered before it finished loading. Fix: pass the component through lazy() on the route and let the router resolve it.');
+  function LazyScreen(props) {
+    if (typeof LazyScreen.component === 'function') return LazyScreen.component(props);
+    let owner = getCurrentOwner();
+    while (owner && !owner.suspense) owner = owner.parent;
+    if (!owner) {
+      throw new Error('[BaseDOM BD1011] Lazy screen was rendered before it finished loading. Fix: pass the component through lazy() on the route and let the router resolve it.');
+    }
+    trackSuspense(Promise.resolve(loader()).then((mod) => {
+      LazyScreen.component = mod && mod.default ? mod.default : mod;
+    }));
+    return document.createTextNode('');
   }
   LazyScreen.__basedomLazy = true;
   LazyScreen.load = loader;

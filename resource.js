@@ -3,7 +3,7 @@
 // A newer source value drops the previous response and aborts its signal.
 // This file does not import the router.
 
-import { effect, onCleanup, signal, untrack } from './state.js';
+import { effect, onCleanup, signal, trackSuspense, untrack } from './state.js';
 
 /**
  * @param {(() => *)|((source: *, context: { signal: AbortSignal }) => Promise<*>)} source
@@ -35,7 +35,7 @@ export function createResource(source, fetcher) {
     const abortSignal = controller.signal;
     setLoading(true);
     setError(null);
-    return Promise.resolve()
+    const job = Promise.resolve()
       .then(() => fetcher(src, { signal: abortSignal }))
       .then((result) => {
         if (id !== seq || abortSignal.aborted) return;
@@ -48,6 +48,8 @@ export function createResource(source, fetcher) {
       .finally(() => {
         if (id === seq) setLoading(false);
       });
+    trackSuspense(job);
+    return job;
   }
 
   if (source) {

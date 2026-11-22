@@ -288,37 +288,10 @@ class Parser {
       return { type: 'array', items };
     }
 
-    if (this.matchOp('{')) {
-      const properties = [];
-      if (!this.peekOp('}')) {
-        do {
-          if (this.peekOp('}')) break;
-          if (this.matchOp('...')) {
-            properties.push({ spread: true, expr: this.parseExpression() });
-            continue;
-          }
-          let key;
-          let computed = false;
-          if (this.matchOp('[')) {
-            key = this.parseExpression();
-            this.expectOp(']');
-            computed = true;
-            this.expectOp(':');
-            properties.push({ key, computed, value: this.parseExpression() });
-            continue;
-          }
-          const token = this.peek();
-          if (!token || token.type !== 'ident') throw new ExpressionError('Expected property name');
-          this.index += 1;
-          if (this.matchOp(':')) {
-            properties.push({ key: token.value, computed: false, value: this.parseExpression() });
-          } else {
-            properties.push({ key: token.value, computed: false, value: { type: 'ident', name: token.value } });
-          }
-        } while (this.matchOp(','));
-      }
-      this.expectOp('}');
-      return { type: 'object', properties };
+    if (this.peekOp('{')) {
+      const parseObject = globalThis.__BASEDOM_PARSE_OBJECT__;
+      if (typeof parseObject === 'function') return parseObject(this);
+      throw new ExpressionError('Object literals load with the extended template module');
     }
 
     throw new ExpressionError(`Unexpected token in template expression`);

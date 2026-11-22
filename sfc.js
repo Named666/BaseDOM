@@ -308,11 +308,15 @@ async function loadSetup(parts, options) {
  * @param {object} [options]
  */
 export async function parseComponentSource(htmlText, options = {}) {
-  if (/\bx-(?:get|post|put|patch|delete|boost)\b/.test(String(htmlText || ''))) {
-    // Non-literal so bundlers leave this as a runtime import. Screens that never
-    // call parseComponentSource do not download the fetch layer.
-    const file = 'fetch-' + 'directives.js';
-    await import(new URL(file, import.meta.url).href);
+  const source = String(htmlText || '');
+  const lazyModules = [];
+  if (/\bx-(?:get|post|put|patch|delete|boost)\b/.test(source)) lazyModules.push('fetch-' + 'directives.js');
+  if (/\bx-(?:text|html|cloak|once|pre|memo|teleport|transition|move|keep-alive)\b|<x-component\b|x-model[.:]|@[^\s"'=]*\.|x-on:[^\s"'=]*\.|(?<!\{)\{(?!\{)/i.test(source)) {
+    lazyModules.push('directives-' + 'parity.js');
+  }
+  for (const file of lazyModules) {
+    // Non-literal so the counter bundle does not download these modules.
+    await import(/* @vite-ignore */ new URL(file, import.meta.url).href);
   }
   const parts = extractSfcParts(htmlText);
   const setup = await loadSetup(parts, options);

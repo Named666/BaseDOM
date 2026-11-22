@@ -4,7 +4,16 @@ import { evaluateExpression, childScope } from './expression.js';
 import { reportDiagnostic } from './diagnostics.js';
 import { registerDirective } from './parser.js';
 import { getComponent } from './registry.js';
-import './directives-parity.js';
+
+/** Filled in by directives-parity.js when a template actually uses it. */
+export const optionalHooks = {
+  enter() {},
+  leave(_element, done) { if (typeof done === 'function') done(); },
+  move() {},
+  onEvent() {},
+  model() {},
+  for: null
+};
 import { createComponent } from './components.js';
 import { callOnMountRecursive, callOnUnmountRecursive } from './lifecycle.js';
 
@@ -64,7 +73,7 @@ export const xIfDirective = {
                     const ifNodeClone = node.cloneNode(true);
                     ifNodeClone.removeAttribute('x-if');
                     const shown = parseNode(ifNodeClone, context);
-                    if (node.hasAttribute('x-transition')) playEnter(shown, node.getAttribute('x-transition'));
+                    if (node.hasAttribute('x-transition')) optionalHooks.enter(shown, node.getAttribute('x-transition') || 'v');
                     return shown;
                 } else if (elseNode) {
                     // Clone the node fresh on each mount to ensure clean lifecycle hooks
@@ -110,22 +119,6 @@ export const xElseDirective = {
     }
 };
 
-export function playEnter(element, name) {
-    if (!(element instanceof HTMLElement)) return element;
-    const prefix = name || 'v';
-    element.classList.add(`${prefix}-enter-from`, `${prefix}-enter-active`);
-    requestAnimationFrame(() => {
-        element.classList.remove(`${prefix}-enter-from`);
-        element.classList.add(`${prefix}-enter-to`);
-        const done = () => {
-            element.classList.remove(`${prefix}-enter-active`, `${prefix}-enter-to`);
-            element.removeEventListener('transitionend', done);
-        };
-        element.addEventListener('transitionend', done);
-    });
-    return element;
-}
-
 function warn(message, extra) {
     if (typeof window !== 'undefined' && typeof window.devWarn === 'function') window.devWarn(message, extra);
     else console.warn(message, extra === undefined ? '' : extra);
@@ -146,77 +139,49 @@ function realizeRow(rendered) {
 /**
  * x-for keeps real DOM nodes and moves them. Keys come from x-key, otherwise
  * the index. This is not a virtual DOM: the nodes in the map are the live elements.
+ * Number ranges, object walks, and destructuring load with the optional module.
  */
-function parseForHead(expr) {
-    const match = String(expr || '').match(/^(.*?)\s+in\s+([\s\S]+)$/);
-    if (!match) return null;
-    let left = match[1].trim();
-    if (left.startsWith('(') && left.endsWith(')')) left = left.slice(1, -1).trim();
-    if (left.startsWith('{') && left.endsWith('}')) {
-        const names = left.slice(1, -1).split(',').map((part) => part.trim()).filter(Boolean);
-        if (!names.length) return null;
-        return { kind: 'destructure', names, listExpr: match[2].trim() };
-    }
-    const names = left.split(',').map((part) => part.trim()).filter(Boolean);
-    if (!names.length || names.some((name) => !/^[A-Za-z_$][\w$]*$/.test(name))) return null;
-    return { kind: 'names', names, listExpr: match[2].trim() };
-}
-
-function rowsOf(value) {
-    if (typeof value === 'number' && Number.isFinite(value)) {
-        const count = Math.max(0, Math.floor(value));
-        return Array.from({ length: count }, (_, index) => ({ item: index + 1, key: undefined, index }));
-    }
-    if (Array.isArray(value)) return value.map((item, index) => ({ item, key: undefined, index }));
-    if (value && typeof value === 'object') {
-        return Object.keys(value).map((key, index) => ({ item: value[key], key, index }));
-    }
-    return [];
-}
-
 export const xForDirective = {
     controlFlow: true,
     handle: (parsingContext) => {
-        const { node, context, parseNode } = parsingContext;
+        const { node } = parsingContext;
         if (!node.hasAttribute || !node.hasAttribute('x-for')) return null;
+        const expr = node.getAttribute('x-for') || '';
+        if (typeof optionalHooks.for === 'function') return optionalHooks.for(parsingContext);
+        return simpleFor(parsingContext);
+    }
+};
 
+function simpleFor(parsingContext) {
+        const { node, context, parseNode } = parsingContext;
         const forDirective = node.getAttribute('x-for');
-        const head = parseForHead(forDirective);
-        if (!head) {
+        const forMatch = forDirective.match(/^(\w+)(?:\s*,\s*(\w+))?\s+in\s+(.+)$/);
+        if (!forMatch) {
             console.warn(`Invalid x-for expression: ${forDirective}`);
             return () => [];
         }
-
-        const { listExpr } = head;
-        const itemName = head.kind === 'names' ? head.names[0] : head.names[0];
-        const indexName = head.kind === 'names' && head.names.length === 2 ? head.names[1] : null;
+        const [, itemName, indexName, listExpr] = forMatch;
         const keyExpr = node.getAttribute('x-key');
         const nodeClone = node.cloneNode(true);
         nodeClone.removeAttribute('x-for');
         if (keyExpr != null) nodeClone.removeAttribute('x-key');
-
         const start = document.createComment('x-for');
         const end = document.createComment('/x-for');
         const fragment = document.createDocumentFragment();
         Object.defineProperty(fragment, '__live', { value: true });
         fragment.append(start, end);
         const rows = new Map();
-
         const stop = effect(() => {
             let items;
-            try {
-                items = unwrapSignal(evaluateExpression(listExpr.trim(), context));
-            } catch (error) {
+            try { items = unwrapSignal(evaluateExpression(listExpr.trim(), context)); }
+            catch (error) {
                 warn(`[directives.js/xForDirective] Error evaluating x-for expression '${listExpr}':`, error);
                 items = [];
             }
-            const records = rowsOf(items);
-
+            if (!Array.isArray(items)) items = [];
             const seen = new Set();
             const nextKeys = [];
-            records.forEach((record) => {
-                const item = record.item;
-                const index = record.index;
+            items.forEach((item, index) => {
                 let key = index;
                 if (keyExpr) {
                     const keyContext = { ...context, [itemName]: signal(item)[0] };
@@ -224,34 +189,19 @@ export const xForDirective = {
                     const evaluated = evaluateExpression(keyExpr, keyContext);
                     if (evaluated != null && evaluated !== '') key = evaluated;
                 }
-                if (seen.has(key)) {
-                    console.warn(`[BaseDOM] duplicate x-key "${String(key)}" in x-for`);
-                    key = `${String(key)}#${index}`;
-                }
+                if (seen.has(key)) key = `${String(key)}#${index}`;
                 seen.add(key);
                 nextKeys.push(key);
-
                 const existing = rows.get(key);
-                if (existing) {
-                    existing.setItem(item);
-                    existing.setIndex(index);
-                    if (existing.setKey) existing.setKey(record.key);
-                    return;
-                }
-                const row = untrack(() => createRow(record));
-                rows.set(key, row);
+                if (existing) { existing.setItem(item); existing.setIndex(index); return; }
+                rows.set(key, untrack(() => createRow(item, index)));
             });
-
             for (const [key, row] of [...rows]) {
                 if (seen.has(key)) continue;
-                if (row.el.parentNode) {
-                    callOnUnmountRecursive(row.el);
-                    row.el.remove();
-                }
+                if (row.el.parentNode) { callOnUnmountRecursive(row.el); row.el.remove(); }
                 row.dispose();
                 rows.delete(key);
             }
-
             const parent = end.parentNode;
             if (!parent) return;
             for (const key of nextKeys) {
@@ -266,101 +216,23 @@ export const xForDirective = {
             }
         });
         end.__dispose = stop;
-
-        function createRow(record) {
+        function createRow(item, index) {
             const owner = createOwner();
-            const [getItem, setItem] = signal(record.item);
-            const [getIndex, setIndex] = signal(record.index);
-            const [getKey, setKey] = signal(record.key);
-            const loopContext = { ...context };
-            if (head.kind === 'destructure') {
-                for (const name of head.names) {
-                    const read = () => {
-                        const current = getItem();
-                        return current == null ? undefined : current[name];
-                    };
-                    read.__isSignal = true;
-                    loopContext[name] = read;
-                }
-            } else if (record.key !== undefined && head.names.length > 1) {
-                loopContext[head.names[0]] = getItem;
-                loopContext[head.names[1]] = getKey;
-                if (head.names[2]) loopContext[head.names[2]] = getIndex;
-            } else {
-                loopContext[itemName] = getItem;
-                if (indexName) loopContext[indexName] = getIndex;
-                else loopContext[`${itemName}Index`] = getIndex;
-            }
+            const [getItem, setItem] = signal(item);
+            const [getIndex, setIndex] = signal(index);
+            const loopContext = { ...context, [itemName]: getItem };
+            if (indexName) loopContext[indexName] = getIndex;
+            else loopContext[`${itemName}Index`] = getIndex;
             let el;
-            runWithOwner(owner, () => {
-                el = realizeRow(parseNode(nodeClone.cloneNode(true), loopContext));
-            });
-            const row = { el, setItem, setIndex, setKey, dispose: () => disposeOwner(owner) };
-            // Dev-only link so an HMR swap can retarget the live row. Production
-            // builds drop this branch because import.meta.hot is false.
+            runWithOwner(owner, () => { el = realizeRow(parseNode(nodeClone.cloneNode(true), loopContext)); });
+            const row = { el, setItem, setIndex, dispose: () => disposeOwner(owner) };
             if (import.meta.hot && el) el.__basedomForRow = row;
             return row;
         }
-
         return fragment;
-    }
-};
+}
 
 // --- Attribute Processing Directives ---
-
-const KEY_MODIFIERS = {
-    enter: 'Enter',
-    esc: 'Escape',
-    escape: 'Escape',
-    tab: 'Tab',
-    space: ' ',
-    up: 'ArrowUp',
-    down: 'ArrowDown',
-    left: 'ArrowLeft',
-    right: 'ArrowRight',
-    delete: 'Delete',
-    backspace: 'Backspace'
-};
-
-function parseEventSpec(raw) {
-    const parts = String(raw || '').split('.');
-    const mods = new Set();
-    let debounce = 0;
-    let throttle = 0;
-    for (let i = 1; i < parts.length; i += 1) {
-        const part = parts[i];
-        if ((part === 'debounce' || part === 'throttle') && parts[i + 1] && /^\d+$/.test(parts[i + 1])) {
-            if (part === 'debounce') debounce = Number(parts[i + 1]);
-            else throttle = Number(parts[i + 1]);
-            i += 1;
-            continue;
-        }
-        mods.add(part);
-    }
-    return { eventName: parts[0], mods, debounce, throttle };
-}
-
-function eventAllowed(event, mods) {
-    if (mods.has('self') && event.target !== event.currentTarget) return false;
-    if (mods.has('left') && event.button !== 0) return false;
-    if (mods.has('middle') && event.button !== 1) return false;
-    if (mods.has('right') && event.button !== 2) return false;
-    const keyMod = [...mods].find((mod) => KEY_MODIFIERS[mod]);
-    if (keyMod && event.key !== KEY_MODIFIERS[keyMod] && !(keyMod === 'delete' && event.key === 'Backspace')) return false;
-    const wants = { ctrl: mods.has('ctrl'), alt: mods.has('alt'), shift: mods.has('shift'), meta: mods.has('meta') };
-    if (mods.has('exact')) {
-        if (!!event.ctrlKey !== wants.ctrl) return false;
-        if (!!event.altKey !== wants.alt) return false;
-        if (!!event.shiftKey !== wants.shift) return false;
-        if (!!event.metaKey !== wants.meta) return false;
-    } else {
-        if (wants.ctrl && !event.ctrlKey) return false;
-        if (wants.alt && !event.altKey) return false;
-        if (wants.shift && !event.shiftKey) return false;
-        if (wants.meta && !event.metaKey) return false;
-    }
-    return true;
-}
 
 export const xOnDirective = {
     controlFlow: false,
@@ -371,58 +243,25 @@ export const xOnDirective = {
             let spec = '';
             if (attr.name.startsWith('x-on:')) spec = attr.name.slice(5);
             else if (attr.name.startsWith('@')) spec = attr.name.slice(1);
-            if (spec) {
-                const dynamic = spec.startsWith('[') && spec.endsWith(']');
-                const parsed = dynamic ? { eventName: '', mods: new Set(), debounce: 0, throttle: 0 } : parseEventSpec(spec.toLowerCase());
-                let eventName = parsed.eventName;
-                if (eventName === 'hover' || eventName === 'enter') eventName = 'mouseenter';
-                if (eventName === 'leave') eventName = 'mouseleave';
-                const handlerExpr = attr.value;
-                const invoke = (event) => {
-                    if (event && typeof event.preventDefault === 'function' && parsed.mods.has('prevent')) event.preventDefault();
-                    if (event && typeof event.stopPropagation === 'function' && parsed.mods.has('stop')) event.stopPropagation();
-                    if (event && !eventAllowed(event, parsed.mods)) return;
-                    const eventContext = {
-                        ...context,
-                        $event: event,
-                        $target: event && event.target,
-                        $currentTarget: event && event.currentTarget
-                    };
-                    const result = evaluateExpression(handlerExpr, eventContext);
-                    if (typeof result === 'function') result(event);
-                };
-                let wrapped = invoke;
-                if (parsed.debounce) {
-                    let timer = 0;
-                    wrapped = (event) => {
-                        clearTimeout(timer);
-                        timer = setTimeout(() => invoke(event), parsed.debounce);
-                    };
-                } else if (parsed.throttle) {
-                    let last = 0;
-                    wrapped = (event) => {
-                        const now = Date.now();
-                        if (now - last < parsed.throttle) return;
-                        last = now;
-                        invoke(event);
-                    };
-                }
-                if (dynamic || parsed.mods.has('capture') || parsed.mods.has('passive') || parsed.mods.has('once')) {
-                    const previous = props.onMount;
-                    props.onMount = (element) => {
-                        if (typeof previous === 'function') previous(element);
-                        const name = dynamic ? String(evaluateExpression(spec.slice(1, -1), context) || '') : eventName;
-                        if (!name) return;
-                        element.addEventListener(name, wrapped, {
-                            capture: parsed.mods.has('capture'),
-                            passive: parsed.mods.has('passive'),
-                            once: parsed.mods.has('once')
-                        });
-                    };
-                } else if (eventName) {
-                    props[`on${eventName}`] = wrapped;
-                }
+            if (!spec) continue;
+            if (spec.includes('.') || spec.startsWith('[')) {
+                optionalHooks.onEvent(parsingContext, props, attr, spec);
+                continue;
             }
+            let eventName = spec.toLowerCase();
+            if (eventName === 'hover' || eventName === 'enter') eventName = 'mouseenter';
+            if (eventName === 'leave') eventName = 'mouseleave';
+            const handlerExpr = attr.value;
+            props[`on${eventName}`] = (event) => {
+                const eventContext = {
+                    ...context,
+                    $event: event,
+                    $target: event && event.target,
+                    $currentTarget: event && event.currentTarget
+                };
+                const result = evaluateExpression(handlerExpr, eventContext);
+                if (typeof result === 'function') result(event);
+            };
         }
     }
 };
@@ -517,8 +356,11 @@ export const xModelDirective = {
         const { node, context } = parsingContext;
         const modelAttr = [...(node.attributes || [])].find((attr) => attr.name === 'x-model' || attr.name.startsWith('x-model.') || attr.name.startsWith('x-model:'));
         if (!modelAttr) return;
-        const modelMods = new Set(modelAttr.name.startsWith('x-model.') ? modelAttr.name.slice(8).split('.').filter(Boolean) : []);
-        const modelProp = modelAttr.name.startsWith('x-model:') ? modelAttr.name.slice(8) : 'modelValue';
+        if (modelAttr.name !== 'x-model') {
+            optionalHooks.model(parsingContext, props, modelAttr);
+            return;
+        }
+        const modelProp = 'modelValue';
 
         const modelExpr = modelAttr.value.trim();
         let signal = context[modelExpr];
@@ -547,27 +389,13 @@ export const xModelDirective = {
 
         if (getComponent(node.tagName)) {
             props[modelProp] = computed(() => getter());
-            props[`onUpdate:${modelProp}`] = (value) => setter(modelMods.has('trim') && typeof value === 'string' ? value.trim() : value);
+            props[`onupdate:${modelProp.toLowerCase()}`] = (value) => setter(value);
             return;
         }
 
         if (!props.attrs) props.attrs = {};
         const tagName = node.tagName.toLowerCase();
         const type = node.getAttribute('type');
-        const writeText = (raw) => {
-            let next = raw;
-            if (modelMods.has('trim') && typeof next === 'string') next = next.trim();
-            if (modelMods.has('number') || type === 'number' || type === 'range') {
-                if (next === '') setter(null);
-                else {
-                    const parsed = Number(next);
-                    setter(Number.isNaN(parsed) ? null : parsed);
-                }
-                return;
-            }
-            setter(next);
-        };
-
         if (tagName === 'input' && type === 'checkbox') {
             props.attrs.checked = computed(() => Boolean(getter()));
             props.onChange = (event) => setter(event.target.checked);
@@ -597,8 +425,8 @@ export const xModelDirective = {
                 const current = getter();
                 return current == null ? '' : String(current);
             });
-            const inputHandler = (event) => writeText(event.target.value);
-            if (!modelMods.has('lazy')) props.onInput = inputHandler;
+            const inputHandler = (event) => setter(event.target.value);
+            props.onInput = inputHandler;
             props.onChange = inputHandler;
         } else if (tagName === 'select') {
             props.attrs.value = computed(() => {

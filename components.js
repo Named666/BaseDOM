@@ -313,8 +313,12 @@ function appendChildToElement(element, child, effectsToCleanup) {
         return;
       }
       currentChildNodes.forEach(node => {
-        if (node.nodeType === Node.ELEMENT_NODE) callOnUnmountRecursive(node);
-        if (node.parentNode === element) element.removeChild(node);
+        const finish = () => {
+          if (node.nodeType === Node.ELEMENT_NODE) callOnUnmountRecursive(node);
+          if (node.parentNode === element) element.removeChild(node);
+        };
+        if (node.__basedomLeave) node.__basedomLeave(finish);
+        else finish();
       });
       currentChildNodes = [];
       newNodes.forEach(newNode => {

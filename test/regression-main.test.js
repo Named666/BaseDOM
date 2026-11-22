@@ -4,6 +4,7 @@ import { signal } from '../state.js';
 import { defineSfc } from '../sfc.js';
 import { mount } from '../components.js';
 import { evaluateExpression } from '../expression.js';
+import '../directives-parity.js';
 
 function place(view) {
   const host = document.createElement('div');
