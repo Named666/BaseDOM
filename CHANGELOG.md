@@ -27,7 +27,9 @@
 - `createStore` tracks nested paths. `Show`, `For`, `Switch`, `Suspense`, and the other helpers are exported from the package entry.
 - Outlet loading text is `setRouteStatusText` or `meta.loading`. `x-link` can take `x-active` and `x-exact`. Routes accept `redirect` and `alias`.
 - `npx basedom create` starts a router app. `npx basedom create <dir> --template counter` keeps the counter.
-- A template that uses `x-get` or the other fetch verbs imports the fetch layer. A screen that does not use them does not.
+- A template that uses `x-get`, event modifiers, `x-text`, transitions, or object-literal expressions imports that module. A screen that does not use them does not. The counter stays near 12 kB gzip.
+- `x-keep-alive` caches outlet pages. `Suspense` waits on `createResource` and on `lazy()` rendered inside it. `ownedTimeout` reports timer errors to `x-boundary`.
+- Fetch triggers include `load`, `every:`, `revealed`, `changed`, `delay:`, `throttle:`, and `from:`. `x-sync="queue"`, `x-boost`, swap/settle/scroll/show, and `HX-Redirect` / `HX-Trigger` response headers are handled.
 
 ### DX
 
