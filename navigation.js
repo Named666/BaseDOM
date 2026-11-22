@@ -174,12 +174,17 @@ async function navigateNow(path, { replace = false, triggeredByPopstate = false 
     if (stale()) return;
 
     setPendingNavigation(path);
+    const redirect = targetRouteMatch && targetRouteMatch.meta && targetRouteMatch.meta.redirect;
+    if (redirect && normalizeRoutePath(redirect) !== path) {
+      return navigateNow(redirect, { replace: true, triggeredByPopstate }, version);
+    }
 
     const rendered = await renderRoute(path, { isCurrent: () => version === navigationVersion });
     if (stale() || (rendered && rendered.dropped)) return;
     if (!triggeredByPopstate) writeBrowserRoute(path, replace);
     // Update the `currentRoute` signal so future popstate handlers know the origin
     setCurrentRoute(path);
+    markActiveLinks();
     focusRouteHeading();
 
     // Handle scroll behavior
@@ -237,6 +242,21 @@ export function shouldInterceptLink(link, event) {
 }
 
 // --- Link Interception ---
+/** Marks x-link anchors whose href matches the current route. */
+export function markActiveLinks() {
+  if (typeof document === 'undefined') return;
+  const current = normalizeRoutePath(readBrowserRoute() || '/');
+  for (const link of document.querySelectorAll('a[x-link]')) {
+    const href = normalizeRoutePath(link.getAttribute('href') || '/');
+    const exact = link.hasAttribute('x-exact');
+    const on = exact ? href === current : current === href || current.startsWith(href === '/' ? '/' : `${href}/`);
+    const className = link.getAttribute('x-active') || 'active';
+    link.classList.toggle(className, href === '/' ? current === '/' : on);
+    if (on && (exact || href === current)) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  }
+}
+
 export function attachLinkInterception() {
   if (linkInterceptionAttached) return;
   if (typeof document === 'undefined' || !document.body) return;

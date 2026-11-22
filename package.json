@@ -11,6 +11,9 @@
   "files": [
     "components.js",
     "directives-core.js",
+    "directives-parity.js",
+    "control.js",
+    "store.js",
     "expression.js",
     "fetch.js",
     "fetch-directives.js",

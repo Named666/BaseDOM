@@ -60,6 +60,29 @@ function add(event) {
 }
 ```
 
+## Equivalence
+
+| Vue / Solid / HTMX | BaseDOM |
+| --- | --- |
+| `v-text` / text interpolation | `x-text` and `{{ name }}` |
+| `v-html` | `x-html` (sanitized like a server template; directives inside it do not run) |
+| `v-cloak` | `x-cloak` (removed on mount) |
+| `v-once` | `x-once` |
+| `v-pre` | `x-pre` |
+| `v-memo` | `x-memo` |
+| `v-if` / `v-else` / `v-show` / `v-for` | `x-if` / `x-else` / `x-show` / `x-for` |
+| `v-on` / `@` modifiers | `@click.prevent.stop.self.once` and key modifiers such as `.enter` |
+| `v-model` / `model` | `x-model`, `.lazy` `.number` `.trim`, and `x-model:name` on a component |
+| `:class` / `:style` object | the same object and array syntax |
+| `v-bind` object / dynamic arg | `x-bind="attrs"` and `:[name]` / `@[event]` |
+| `<Teleport>` / `Portal` | `x-teleport` and `Portal` |
+| `<Transition>` | `x-transition` on `x-if` (enter classes) |
+| `<component :is>` / `Dynamic` | `x-component :is` and `Dynamic` |
+| `defineExpose` | `defineExpose` plus `x-ref` |
+| `createStore` / `produce` | `createStore` / `produce` / `reconcile` |
+| `Show` / `For` / `Switch` / `Suspense` | the same names from `basedom` |
+| `hx-get` / `hx-post` | `x-get` / `x-post` (included by the compiler only when the template uses them) |
+
 ## Directives
 
 These are the directives in the screen runtime. `{{ name }}` writes text. `:attr` and `x-bind:attr` write an attribute. `:class` and `:style` do the same for those two attributes. A class or style value that is an object is applied as a map (`{ ready: true }` turns on the `ready` class). Template expressions do not include object literals, so a map is passed from JavaScript.

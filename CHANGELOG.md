@@ -20,6 +20,15 @@
 - HMR and the graph parser are not included in production bundles.
 - Template and runtime failures use `BD1xxx` codes with a file, expression, and fix hint when known.
 
+### Parity
+
+- Template expressions accept objects and arrays, so `:class="{ active: isOn(), big }"` works.
+- Screen directives: `x-text`, `x-html` (sanitized), `x-cloak`, `x-once`, `x-pre`, `x-memo`, `x-teleport`, `x-component`, event modifiers, `x-model` modifiers, and `x-for` over numbers and objects.
+- `createStore` tracks nested paths. `Show`, `For`, `Switch`, `Suspense`, and the other helpers are exported from the package entry.
+- Outlet loading text is `setRouteStatusText` or `meta.loading`. `x-link` can take `x-active` and `x-exact`. Routes accept `redirect` and `alias`.
+- `npx basedom create` starts a router app. `npx basedom create <dir> --template counter` keeps the counter.
+- A template that uses `x-get` or the other fetch verbs imports the fetch layer. A screen that does not use them does not.
+
 ### DX
 
 - `basedom create <directory>` (also `npm create basedom`) copies a Vite app with one counter. Child `.html` imports register themselves. The tag is the file name.

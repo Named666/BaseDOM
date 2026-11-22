@@ -277,6 +277,47 @@ export function effect(fn) {
  * @param {Function} fn
  * @returns {Function}
  */
+export function createMemo(fn) {
+  return computed(fn);
+}
+
+/**
+ * Subscribes only to the listed dependencies, then runs fn outside tracking.
+ * Pass the result to effect() or computed().
+ */
+export function on(deps, fn) {
+  const list = Array.isArray(deps) ? deps : [deps];
+  let previous;
+  let ready = false;
+  return () => {
+    const next = list.map((dep) => dep());
+    const value = untrack(() => fn(list.length === 1 ? next[0] : next, ready ? (list.length === 1 ? previous[0] : previous) : undefined));
+    previous = next;
+    ready = true;
+    return value;
+  };
+}
+
+/** Efficient equality check for list rows. Reading selector(key) updates only when that key's selected state flips. */
+export function createSelector(source) {
+  const flags = new Map();
+  let current = untrack(source);
+  effect(() => {
+    const next = source();
+    if (Object.is(next, current)) return;
+    const previous = current;
+    current = next;
+    const before = flags.get(previous);
+    const after = flags.get(next);
+    if (before) before[1](false);
+    if (after) after[1](true);
+  });
+  return (key) => {
+    if (!flags.has(key)) flags.set(key, signal(Object.is(current, key)));
+    return flags.get(key)[0]();
+  };
+}
+
 export function computed(fn) {
   let value;
   let hasValue = false;

@@ -29,13 +29,20 @@ function findOutlet(name = 'main') {
   return document.querySelector(selector);
 }
 
+let routeStatusText = { loading: 'Loading…', error: 'This page failed to load.' };
+
+/** Sets the text shown in an outlet while a route is loading or has failed. */
+export function setRouteStatusText(text = {}) {
+  routeStatusText = { ...routeStatusText, ...text };
+}
+
 function statusNode(state, error) {
   const p = document.createElement('p');
   p.setAttribute('data-route-state', state);
   p.setAttribute('role', state === 'error' ? 'alert' : 'status');
   p.textContent = state === 'error'
-    ? (error && error.message ? error.message : 'This page failed to load.')
-    : 'Loading…';
+    ? (error && error.message ? error.message : routeStatusText.error)
+    : (typeof error === 'string' && error ? error : routeStatusText.loading);
   return p;
 }
 
@@ -224,7 +231,7 @@ async function runRouteLoad(matched, params, query, cleanPath, isCurrent) {
   if (typeof leaf.load !== 'function' && !warm) return result;
   if (typeof leaf.load === 'function') {
     result.routeState = 'loading';
-    await paintMatched(matched, params, query, result, () => statusNode('loading'));
+    await paintMatched(matched, params, query, result, () => statusNode('loading', leaf.meta && leaf.meta.loading));
     if (!isCurrent()) {
       result.dropped = true;
       return result;
@@ -257,7 +264,7 @@ async function runRouteLoad(matched, params, query, cleanPath, isCurrent) {
   }
   if (warm && typeof leaf.load !== 'function') {
     result.routeState = 'loading';
-    await paintMatched(matched, params, query, result, () => statusNode('loading'));
+    await paintMatched(matched, params, query, result, () => statusNode('loading', leaf.meta && leaf.meta.loading));
     if (!isCurrent()) {
       result.dropped = true;
       return result;

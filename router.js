@@ -20,6 +20,7 @@ function defineRoute(config, componentFn, guards = {}, isChild = false, inherite
     ? { path: config, component: componentFn, guards }
     : { ...config, component: config.component || componentFn, guards: config.guards || {} };
   const combinedMeta = { ...inheritedMeta, ...(routeConfig.meta || {}) };
+  if (routeConfig.redirect) combinedMeta.redirect = routeConfig.redirect;
   const { path, component, children, scrollBehavior } = routeConfig;
 
   // Path normalization
@@ -62,6 +63,11 @@ function defineRoute(config, componentFn, guards = {}, isChild = false, inherite
     }) || []
   };
   if (!isChild) routes.push(routeObject);
+  if (!isChild && routeConfig.alias && !routeConfig.__fromAlias) {
+    for (const alias of [].concat(routeConfig.alias)) {
+      defineRoute({ ...routeConfig, path: alias, alias: undefined, __fromAlias: true });
+    }
+  }
   return routeObject;
 }
 export { defineRoute };

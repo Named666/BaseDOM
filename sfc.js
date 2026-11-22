@@ -308,6 +308,12 @@ async function loadSetup(parts, options) {
  * @param {object} [options]
  */
 export async function parseComponentSource(htmlText, options = {}) {
+  if (/\bx-(?:get|post|put|patch|delete|boost)\b/.test(String(htmlText || ''))) {
+    // Non-literal so bundlers leave this as a runtime import. Screens that never
+    // call parseComponentSource do not download the fetch layer.
+    const file = 'fetch-' + 'directives.js';
+    await import(new URL(file, import.meta.url).href);
+  }
   const parts = extractSfcParts(htmlText);
   const setup = await loadSetup(parts, options);
   return defineSfc({

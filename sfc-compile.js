@@ -257,6 +257,10 @@ export function compileSfcToModule(source, filename = 'component.html', options 
     bindings = [...new Set([...imported, ...local])];
   }
 
+  if (/\bx-(?:get|post|put|patch|delete|boost)\b/.test(parts.template || '')) {
+    const fetchRuntime = runtime.replace(/sfc\.js$/, 'fetch-directives.js');
+    prelude = `import ${JSON.stringify(fetchRuntime)};\n${prelude}`;
+  }
   const registered = registerHtmlComponents(prelude, runtime);
   prelude = registered.prelude;
   const registerCalls = registered.calls;

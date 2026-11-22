@@ -3,7 +3,6 @@
 
 import { evaluateExpression } from './expression.js';
 import { registerDirective } from './parser.js';
-import { navigate, attachLinkInterception } from './navigation.js';
 import { abortFetch, fetchAndSwap } from './fetch.js';
 
 const VERBS = ['x-get', 'x-post', 'x-put', 'x-patch', 'x-delete'];
@@ -157,8 +156,11 @@ export const FetchDirective = {
           if (result && result.ok) {
             const push = config['x-push-url'];
             const replace = config['x-replace-url'];
-            if (push && push !== 'false') navigate(push === 'true' ? url : push);
-            else if (replace && replace !== 'false') navigate(replace === 'true' ? url : replace, { replace: true });
+            if ((push && push !== 'false') || (replace && replace !== 'false')) {
+              const nav = await import('./navigation.js');
+              if (push && push !== 'false') nav.navigate(push === 'true' ? url : push);
+              else nav.navigate(replace === 'true' ? url : replace, { replace: true });
+            }
           }
         } finally {
           if (timer) clearTimeout(timer);
@@ -196,9 +198,6 @@ export function installFetch() {
   // One registration. The parser runs every registered directive on every node,
   // so registering this object under each verb would fire the request five times.
   registerDirective('x-get', FetchDirective);
-  if (typeof document !== 'undefined') {
-    try { attachLinkInterception(); } catch { /* router links are optional until the document exists */ }
-  }
 }
 
 installFetch();

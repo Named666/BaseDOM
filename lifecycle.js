@@ -32,6 +32,10 @@ export function onUnmount(fn) {
   currentComponentOwner('onUnmount').hooks.onUnmount.push(fn);
 }
 
+export function onUpdated(fn) {
+  return onUpdate(fn);
+}
+
 export function onUpdate(fn) {
   if (typeof fn !== 'function') throw new TypeError('onUpdate(fn) expects a function');
   currentComponentOwner('onUpdate').hooks.onUpdate.push(fn);

@@ -3,15 +3,19 @@ import { cp, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const name = process.argv[2];
+const args = process.argv.slice(2).filter((arg) => arg !== '--');
+const templateFlag = args.indexOf('--template');
+const templateName = templateFlag >= 0 ? args[templateFlag + 1] : 'app';
+const templateValueIndex = templateFlag >= 0 ? templateFlag + 1 : -1;
+const name = args.find((arg, index) => !arg.startsWith('--') && index !== templateValueIndex);
 if (!name || name.startsWith('-')) {
-  console.error('Usage: basedom create <directory>');
+  console.error('Usage: basedom create <directory> [--template app|counter]');
   process.exit(1);
 }
 
 const dest = path.resolve(name);
 const here = path.dirname(fileURLToPath(import.meta.url));
-const template = path.join(here, '..', 'templates', 'app');
+const template = path.join(here, '..', 'templates', templateName === 'counter' ? 'counter' : 'app');
 await cp(template, dest, { recursive: true });
 
 const label = path.basename(dest);

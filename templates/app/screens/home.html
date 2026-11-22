@@ -1,0 +1,12 @@
+<template>
+  <section>
+    <h1>{{ title }}</h1>
+    <p>{{ count }} <button type="button" @click="increment">Add</button></p>
+  </section>
+</template>
+<script setup>
+import { signal } from 'basedom';
+const title = 'Home';
+const [count, setCount] = signal(0);
+function increment() { setCount((value) => value + 1); }
+</script>
