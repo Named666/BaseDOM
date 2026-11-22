@@ -140,6 +140,10 @@ function tokenize(input) {
       continue;
     }
 
+    if (source.startsWith('...', index)) {
+      pushOp('...', 3);
+      continue;
+    }
     if ('=+-*/%<>!?:.,[](){}'.includes(char)) {
       pushOp(char, 1);
       continue;
@@ -276,11 +280,45 @@ class Parser {
       if (!this.peekOp(']')) {
         do {
           if (this.peekOp(']')) break;
-          items.push(this.parseExpression());
+          if (this.matchOp('...')) items.push({ spread: true, expr: this.parseExpression() });
+          else items.push(this.parseExpression());
         } while (this.matchOp(','));
       }
       this.expectOp(']');
       return { type: 'array', items };
+    }
+
+    if (this.matchOp('{')) {
+      const properties = [];
+      if (!this.peekOp('}')) {
+        do {
+          if (this.peekOp('}')) break;
+          if (this.matchOp('...')) {
+            properties.push({ spread: true, expr: this.parseExpression() });
+            continue;
+          }
+          let key;
+          let computed = false;
+          if (this.matchOp('[')) {
+            key = this.parseExpression();
+            this.expectOp(']');
+            computed = true;
+            this.expectOp(':');
+            properties.push({ key, computed, value: this.parseExpression() });
+            continue;
+          }
+          const token = this.peek();
+          if (!token || token.type !== 'ident') throw new ExpressionError('Expected property name');
+          this.index += 1;
+          if (this.matchOp(':')) {
+            properties.push({ key: token.value, computed: false, value: this.parseExpression() });
+          } else {
+            properties.push({ key: token.value, computed: false, value: { type: 'ident', name: token.value } });
+          }
+        } while (this.matchOp(','));
+      }
+      this.expectOp('}');
+      return { type: 'object', properties };
     }
 
     throw new ExpressionError(`Unexpected token in template expression`);
@@ -364,8 +402,29 @@ function evalAst(node, context) {
       return evalBinary(node, context);
     case 'ternary':
       return evalAst(node.test, context) ? evalAst(node.yes, context) : evalAst(node.no, context);
-    case 'array':
-      return node.items.map((item) => evalAst(item, context));
+    case 'array': {
+      const items = [];
+      for (const item of node.items) {
+        if (item && item.spread) {
+          const value = evalAst(item.expr, context);
+          if (value && typeof value[Symbol.iterator] === 'function') items.push(...value);
+        } else items.push(evalAst(item, context));
+      }
+      return items;
+    }
+    case 'object': {
+      const obj = {};
+      for (const prop of node.properties) {
+        if (prop.spread) {
+          const value = evalAst(prop.expr, context);
+          if (value && typeof value === 'object') Object.assign(obj, value);
+          continue;
+        }
+        const key = prop.computed ? evalAst(prop.key, context) : prop.key;
+        obj[key] = evalAst(prop.value, context);
+      }
+      return obj;
+    }
     case 'member':
       return evalMember(node, context);
     case 'call':

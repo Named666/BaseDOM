@@ -94,6 +94,19 @@ function assignAttr(el, key, val) {
   else el.setAttribute(key, val === true ? '' : String(val));
 }
 
+function classNameFrom(value) {
+  if (Array.isArray(value)) return value.flat().filter(Boolean).join(' ');
+  if (typeof value === 'string') return value;
+  return Object.entries(value).filter(([, entry]) => (typeof entry === 'function' ? entry() : entry)).map(([key]) => key).join(' ');
+}
+
+function applyStyleMap(el, value) {
+  for (const [styleKey, styleValue] of Object.entries(value)) {
+    const next = typeof styleValue === 'function' ? styleValue() : styleValue;
+    el.style[styleKey] = next == null ? '' : String(next);
+  }
+}
+
 function applyAttribute(el, key, value, effectsToCleanup) {
   value = normalizeAttrValue(value);
   if (key.startsWith('on') && typeof value === 'function') {
@@ -108,18 +121,21 @@ function applyAttribute(el, key, value, effectsToCleanup) {
     el.addEventListener(eventName, wrapped);
     el[handlerProp] = wrapped;
   } else if (key === 'class' && typeof value === 'object' && value !== null && !isSignalLike(value)) {
-    effectsToCleanup.push(effect(() => {
-      el.className = Object.entries(value).filter(([, v]) => typeof v === 'function' ? v() : v).map(([k]) => k).join(' ');
-    }));
+    effectsToCleanup.push(effect(() => { el.className = classNameFrom(value); }));
   } else if (key === 'style' && typeof value === 'object' && value !== null && !isSignalLike(value)) {
-    effectsToCleanup.push(effect(() => {
-      for (const [styleKey, styleValue] of Object.entries(value)) {
-        el.style[styleKey] = typeof styleValue === 'function' ? styleValue() : styleValue;
-      }
-    }));
+    effectsToCleanup.push(effect(() => { applyStyleMap(el, value); }));
   } else if (typeof value === 'function') {
     effectsToCleanup.push(effect(() => {
-      assignAttr(el, key, value());
+      const next = value();
+      if (key === 'class' && next && typeof next === 'object') {
+        el.className = classNameFrom(next);
+        return;
+      }
+      if (key === 'style' && next && typeof next === 'object') {
+        applyStyleMap(el, next);
+        return;
+      }
+      assignAttr(el, key, next);
     }));
   } else if (typeof value === 'boolean') {
     assignAttr(el, key, value);

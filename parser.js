@@ -199,8 +199,10 @@ export function parseNode(node, context, componentStyles = null) {
         // Slot markup keeps the parent scope. attrs is props, not that scope.
         const local = childScope(context);
         local.__slots = {};
+        // Nested x-else must be filtered here, not only at the template root.
+        // master 8f0ae71: preprocessNodes used to run only on top-level nodes.
         const children = [];
-        for (const child of Array.from(node.childNodes)) {
+        for (const child of preprocessNodes(Array.from(node.childNodes))) {
           const rendered = parseNode(child, local);
           if (rendered === null || rendered === undefined || rendered === '') continue;
           if (typeof rendered === 'function' && rendered.__basedomSlot) continue;
@@ -225,6 +227,6 @@ export function parseNode(node, context, componentStyles = null) {
     }
     const props = directiveResult || { attrs: {} };
     if (componentStyles) props.styles = componentStyles;
-    const children = Array.from(node.childNodes).map(child => parseNode(child, context)).filter(Boolean);
+    const children = preprocessNodes(Array.from(node.childNodes)).map(child => parseNode(child, context)).filter(Boolean);
     return Element(node.tagName.toLowerCase())({ ...props, children });
 }
