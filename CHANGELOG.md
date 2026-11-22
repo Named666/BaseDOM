@@ -42,7 +42,8 @@
 - Scoped CSS no longer matches slotted content.
 - Removed `createForm`, `Form`, `Field`, `Submit`, `validation.js`, and `store.js`. A form is `x-model` and the screen's submit function. Shared state is a module of signals.
 - `import 'basedom/fetch'` registers the HTML-swap directives (`x-get`, `x-post`, `x-put`, `x-patch`, `x-delete`). The screen runtime does not import that module. Response HTML goes through `renderServerTemplate`.
-- Removed `startApp`, the `window.signal` / `window.computed` / `window.effect` globals, `getHMRProxy`, and the `basedom:hmr` window event. Mount a component or call `startRouter` yourself. Vite HMR updates `.html` screens directly.
+- `startApp(rootSelector = '#app')` is the boot path again. It starts the router, renders the current URL, and does not install `window.signal`. The counter does not include it.
+- Removed the `window.signal` / `window.computed` / `window.effect` globals, `getHMRProxy`, and the `basedom:hmr` window event. Vite HMR updates `.html` screens directly.
 
 ## 0.4.0
 

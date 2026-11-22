@@ -4,6 +4,10 @@ import { signal } from '../state.js';
 import { defineSfc } from '../sfc.js';
 import { mount } from '../components.js';
 import { evaluateExpression } from '../expression.js';
+import { startApp } from '../boot.js';
+import { defineRoute, resetRoutes } from '../router.js';
+import { resetRenderState } from '../render.js';
+import { currentRoute, setCurrentRoute } from '../navigation.js';
 import '../directives-parity.js';
 
 function place(view) {
@@ -13,7 +17,7 @@ function place(view) {
   return host;
 }
 
-describe('regression against main and master', () => {
+describe('regression against main and master', { concurrency: false }, () => {
   it('renders a nested x-else without also showing the other branch', () => {
     const [show, setShow] = signal(false);
     const host = place(defineSfc({
@@ -70,5 +74,46 @@ describe('regression against main and master', () => {
     setOn(false);
     assert.equal(host.querySelector('p').className, 'big');
     host.remove();
+  });
+
+  it('startApp renders the current URL into #app and does not set window.signal', async () => {
+    resetRoutes();
+    resetRenderState();
+    setCurrentRoute(null);
+    document.body.innerHTML = '<div id="app"></div><div id="other"></div>';
+    history.replaceState({}, '', '/');
+    const Home = defineSfc({ template: '<h1>Booted</h1>' });
+    defineRoute({ path: '/', component: Home });
+    startApp();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(document.querySelector('#app h1').textContent, 'Booted');
+    assert.equal(document.querySelector('#other').childElementCount, 0);
+    assert.equal(currentRoute(), '/');
+    assert.equal(window.signal, undefined);
+    assert.equal(window.computed, undefined);
+    assert.equal(window.effect, undefined);
+  });
+
+  it('startApp waits for DOMContentLoaded while the document is loading', async () => {
+    resetRoutes();
+    resetRenderState();
+    setCurrentRoute(null);
+    document.body.innerHTML = '<div id="root"></div>';
+    history.replaceState({}, '', '/');
+    defineRoute({ path: '/', component: defineSfc({ template: '<h1>Late</h1>' }) });
+    const descriptor = Object.getOwnPropertyDescriptor(document, 'readyState')
+      || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(document), 'readyState');
+    Object.defineProperty(document, 'readyState', { configurable: true, get: () => 'loading' });
+    try {
+      startApp('#root');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(document.querySelector('#root h1'), null);
+      document.dispatchEvent(new Event('DOMContentLoaded'));
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      assert.equal(document.querySelector('#root h1').textContent, 'Late');
+    } finally {
+      if (descriptor) Object.defineProperty(document, 'readyState', descriptor);
+      else delete document.readyState;
+    }
   });
 });

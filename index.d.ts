@@ -80,5 +80,6 @@ export interface RouteContext {
 
 export function defineRoute(config: RouteConfig): RouteConfig;
 export function startRouter(options?: { mode?: 'history' | 'hash' }): void;
+export function startApp(rootSelector?: string): void;
 export function navigate(path: string, options?: { replace?: boolean; triggeredByPopstate?: boolean }): Promise<void>;
 export function shouldInterceptLink(link: Element, event: MouseEvent): boolean;

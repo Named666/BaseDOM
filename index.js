@@ -27,5 +27,6 @@ export * from './lifecycle.js';
 export * from './paths.js';
 export * from './sfc.js';
 export { DEV_MODE, devWarn } from './dev.js';
+export { startApp } from './boot.js';
 export { createStore, produce, reconcile, readonly, toRaw } from './store.js';
 export { Show, For, Index, Switch, Match, Dynamic, Portal, ErrorBoundary, Suspense } from './control.js';

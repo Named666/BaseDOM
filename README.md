@@ -171,6 +171,15 @@ startRouter();
 navigate(location.pathname + location.search);
 ```
 
+`startApp('#app')` does those three steps for you. Define the routes first. The default root is `#app`. It does not put `signal` on `window`. A screen that never imports it, including the counter, does not ship it.
+
+```js
+import { defineRoute, startApp } from 'basedom';
+
+defineRoute({ path: '/', component: Home });
+startApp();
+```
+
 `navigate` returns a promise. Leave it unawaited at the top of the file. Vite's default build target rejects top-level await.
 
 The layout keeps `x-outlet`. A child route renders there and the layout stays mounted.

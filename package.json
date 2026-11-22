@@ -9,6 +9,7 @@
     "basedom": "./scripts/create.mjs"
   },
   "files": [
+    "boot.js",
     "components.js",
     "directives-core.js",
     "directives-parity.js",

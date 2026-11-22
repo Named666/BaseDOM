@@ -45,6 +45,7 @@ const asset = fs.readdirSync('dist/vite-counter/assets').find((file) => /^index-
 const counterBytes = fs.readFileSync(`dist/vite-counter/assets/${asset}`);
 const counterGzip = gzipSync(counterBytes).length;
 assert.equal(counterBytes.includes('fetchAndSwap'), false, 'counter contains the fetch implementation');
+assert.equal(counterBytes.includes('Failed to set initial currentRoute'), false, 'counter contains startApp');
 assert.equal(counterBytes.includes('hasAttribute("x-teleport")'), false, 'counter contains optional directives');
 assert.ok(counterGzip < 13000, `counter gzip ${counterGzip} exceeds 13 kB`);
 console.log(`core graph ok (${screen.length} modules), counter ${counterBytes.length} bytes, gzip ${counterGzip}`);
