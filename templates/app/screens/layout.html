@@ -1,0 +1,12 @@
+<template>
+  <div>
+    <header>
+      <a href="/" x-link x-exact>Home</a>
+    </header>
+    <main x-boundary="This page failed." x-outlet></main>
+  </div>
+</template>
+<style>
+  & { font: 16px/1.4 system-ui, sans-serif; max-width: 36rem; margin: 2rem auto; }
+  header { margin-bottom: 1rem; }
+</style>

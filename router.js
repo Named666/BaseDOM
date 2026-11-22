@@ -1,7 +1,8 @@
 // router.js
 // Core router for SPA navigation and route matching
 import { renderRoute } from './render.js';
-import { attachLinkInterception, navigate } from './navigation.js';
+import { getCurrentOwner, trackSuspense } from './state.js';
+import { attachLinkInterception, navigate, readBrowserRoute, setHistoryMode } from './navigation.js';
 
 export const routes = [];
 
@@ -20,6 +21,7 @@ function defineRoute(config, componentFn, guards = {}, isChild = false, inherite
     ? { path: config, component: componentFn, guards }
     : { ...config, component: config.component || componentFn, guards: config.guards || {} };
   const combinedMeta = { ...inheritedMeta, ...(routeConfig.meta || {}) };
+  if (routeConfig.redirect) combinedMeta.redirect = routeConfig.redirect;
   const { path, component, children, scrollBehavior } = routeConfig;
 
   // Path normalization
@@ -50,6 +52,7 @@ function defineRoute(config, componentFn, guards = {}, isChild = false, inherite
     path: finalPath,
     regex,
     componentFn: component,
+    load: typeof routeConfig.load === 'function' ? routeConfig.load : undefined,
     paramNames,
     guards: routeConfig.guards || {},
     meta: combinedMeta,
@@ -61,9 +64,38 @@ function defineRoute(config, componentFn, guards = {}, isChild = false, inherite
     }) || []
   };
   if (!isChild) routes.push(routeObject);
+  if (!isChild && routeConfig.alias && !routeConfig.__fromAlias) {
+    for (const alias of [].concat(routeConfig.alias)) {
+      defineRoute({ ...routeConfig, path: alias, alias: undefined, __fromAlias: true });
+    }
+  }
   return routeObject;
 }
 export { defineRoute };
+
+/**
+ * Marks a route component as a loader.
+ * `component: lazy(() => loadComponent(url))` or `lazy(() => import('./screen.js'))`.
+ * A plain function is still the screen itself and is not called during loading.
+ * @param {() => Promise<*>} loader
+ */
+export function lazy(loader) {
+  function LazyScreen(props) {
+    if (typeof LazyScreen.component === 'function') return LazyScreen.component(props);
+    let owner = getCurrentOwner();
+    while (owner && !owner.suspense) owner = owner.parent;
+    if (!owner) {
+      throw new Error('[BaseDOM BD1011] Lazy screen was rendered before it finished loading. Fix: pass the component through lazy() on the route and let the router resolve it.');
+    }
+    trackSuspense(Promise.resolve(loader()).then((mod) => {
+      LazyScreen.component = mod && mod.default ? mod.default : mod;
+    }));
+    return document.createTextNode('');
+  }
+  LazyScreen.__basedomLazy = true;
+  LazyScreen.load = loader;
+  return LazyScreen;
+}
 
 /**
  * Recursively matches a path against nested routes.
@@ -148,9 +180,18 @@ export function findMatchingRoute(path) {
 /**
  * Initializes router: popstate and link interception.
  */
-export function startRouter() {
+let routerStarted = false;
+
+export function resetRoutes() {
+  routes.length = 0;
+}
+
+export function startRouter(options = {}) {
+  setHistoryMode(options.mode || 'history');
+  if (routerStarted || typeof window === 'undefined') return;
+  routerStarted = true;
   window.addEventListener('popstate', () => {
-    navigate(location.pathname + location.search, { triggeredByPopstate: true });
+    navigate(readBrowserRoute(), { triggeredByPopstate: true });
   });
   attachLinkInterception();
 }

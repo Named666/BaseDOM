@@ -1,0 +1,19 @@
+<template>
+  <section>
+    <p>{{ title }}</p>
+    <input x-model="name">
+    <slot></slot>
+    <slot name="extra" :item="row"></slot>
+    <kid :count="count" @save="onSave"></kid>
+  </section>
+</template>
+<script setup>
+import { signal } from 'basedom/state.js';
+import { step } from './logic.js';
+const props = defineProps({ title: { required: true }, name: { default: '' } });
+const [count, setCount] = signal(0);
+function onSave() { emit('save', props.title()); }
+provide('theme', count);
+const injected = inject('locale');
+const data = createResource(() => count(), async () => 1);
+</script>

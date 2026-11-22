@@ -1,0 +1,27 @@
+<template>
+  <article>
+    <label>
+      <input type="checkbox" :checked="done" @change="toggle">
+      <span>{{ title }}</span>
+    </label>
+    <slot name="meta"></slot>
+    <button type="button" @click="remove">Remove</button>
+  </article>
+</template>
+<script setup>
+import { defineProps, emit } from 'basedom';
+const props = defineProps({
+  id: { required: true },
+  title: { required: true },
+  done: { default: false }
+});
+const id = props.id;
+const title = props.title;
+const done = props.done;
+function toggle() { emit('toggle', id()); }
+function remove() { emit('remove', id()); }
+</script>
+<style>
+  article { display: flex; gap: 0.75rem; align-items: center; }
+  button { margin-left: auto; }
+</style>

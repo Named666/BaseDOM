@@ -1,0 +1,55 @@
+<template>
+  <section>
+    <h1>{{ filter }}</h1>
+    <form @submit="add">
+      <label>New todo <input name="title" x-model="draft"></label>
+      <button type="submit">Add</button>
+      <p class="error">{{ error }}</p>
+    </form>
+    <p x-if="!visible.length">Nothing here.</p>
+    <ul>
+      <li x-for="todo in visible" x-key="todo.id">
+        <todo-item :id="todo.id" :title="todo.title" :done="todo.done" @remove="onRemove" @toggle="onToggle">
+          <a x-slot="meta" :href="'/todo/' + todo.id" x-link>Open</a>
+        </todo-item>
+      </li>
+    </ul>
+  </section>
+</template>
+<script setup>
+import { signal, computed } from 'basedom';
+import { items, addTodo, removeTodo, toggleTodo } from '../todos.js';
+import '../components/todo-item.html';
+
+const [draft, setDraft] = signal('');
+const [error, setError] = signal('');
+const name = props.params.filter;
+const filter = name === 'active' ? 'Active' : name === 'done' ? 'Done' : 'All';
+const visible = computed(() => {
+  const list = items();
+  if (filter === 'Active') return list.filter((todo) => !todo.done);
+  if (filter === 'Done') return list.filter((todo) => todo.done);
+  return list;
+});
+
+function add(event) {
+  event.preventDefault();
+  const title = draft().trim();
+  if (!title) {
+    setError('Title is required.');
+    return;
+  }
+  addTodo(title);
+  setDraft('');
+  setError('');
+}
+
+function onRemove(id) { removeTodo(id); }
+function onToggle(id) { toggleTodo(id); }
+</script>
+<style>
+  form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+  .error { color: #9b1c1c; margin: 0; }
+  ul { list-style: none; padding: 0; }
+  li { margin: 0.5rem 0; }
+</style>

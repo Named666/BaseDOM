@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://basedom.dev/schema/basedom-graph.schema.json",
+  "title": "BaseDOM app graph",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "components", "routes", "diagnostics"],
+  "properties": {
+    "version": { "type": "integer" },
+    "components": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/component" }
+    },
+    "routes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/route" }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/diagnostic" }
+    }
+  },
+  "$defs": {
+    "loc": {
+      "type": "object",
+      "required": ["file", "line", "column"],
+      "properties": {
+        "file": { "type": "string" },
+        "line": { "type": "integer" },
+        "column": { "type": "integer" }
+      }
+    },
+    "component": {
+      "type": "object",
+      "required": ["id", "name", "file", "loc", "imports", "props", "emits", "slots", "provides", "injects", "resources", "models", "uses"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "file": { "type": "string" },
+        "loc": { "$ref": "#/$defs/loc" },
+        "imports": { "type": "array" },
+        "props": { "type": "array" },
+        "emits": { "type": "array" },
+        "slots": { "type": "array" },
+        "provides": { "type": "array" },
+        "injects": { "type": "array" },
+        "resources": { "type": "array" },
+        "models": { "type": "array" },
+        "fetches": { "type": "array" },
+        "uses": { "type": "array" },
+        "signals": { "type": "array" },
+        "bindings": { "type": "array" },
+        "template": { "type": "string" },
+        "styles": { "type": "string" },
+        "script": { "type": "string" }
+      }
+    },
+    "route": {
+      "type": "object",
+      "required": ["path", "component", "load", "children", "file"],
+      "properties": {
+        "path": { "type": "object" },
+        "component": { "type": "object" },
+        "load": { "type": "object" },
+        "children": { "type": "array" },
+        "loc": { "$ref": "#/$defs/loc" },
+        "file": { "type": "string" }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "file": { "type": "string" },
+        "line": { "type": "integer" },
+        "column": { "type": "integer" },
+        "hint": { "type": "string" }
+      }
+    }
+  }
+}

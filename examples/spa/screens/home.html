@@ -1,0 +1,13 @@
+<template>
+  <section>
+    <h1>Home</h1>
+    <p>Count: {{ count }}</p>
+    <button type="button" @click="increment">Increment</button>
+    <greeting :name="label" @ping="onPing">
+      <p class="slot-copy" x-slot="extra">{{ count }} clicks so far</p>
+    </greeting>
+    <p class="ping">{{ pingMessage }}</p>
+  </section>
+</template>
+
+<script setup src="./home.js"></script>

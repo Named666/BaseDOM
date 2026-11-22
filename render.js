@@ -2,11 +2,79 @@
 // render.js
 
 import { findMatchingRoute, parseQuery, routes } from './router.js';
-import { renderComponent, createComponent } from './components.js';
+import { renderComponent, createComponent, mount } from './components.js';
 import { signal } from './state.js';
 import { parseComponent } from './parser.js';
-import { devWarn } from './index.js';
+import { devWarn } from './dev.js';
 import { resolveComponentPath } from './paths.js';
+import { reportDiagnostic } from './diagnostics.js';
+
+let activeLoad = null;
+
+/** Aborts the route load() that is currently in flight. */
+export function abortActiveRouteLoad() {
+  if (activeLoad) {
+    activeLoad.abort();
+    activeLoad = null;
+  }
+}
+
+function isLazyComponent(component) {
+  return typeof component === 'function'
+    && (component.__basedomLazy === true || component.constructor?.name === 'AsyncFunction');
+}
+
+function findOutlet(name = 'main') {
+  const selector = name === 'main' ? '[x-outlet], [x-outlet="main"]' : `[x-outlet="${name}"]`;
+  return document.querySelector(selector);
+}
+
+let routeStatusText = { loading: 'Loading…', error: 'This page failed to load.' };
+
+/** Sets the text shown in an outlet while a route is loading or has failed. */
+export function setRouteStatusText(text = {}) {
+  routeStatusText = { ...routeStatusText, ...text };
+}
+
+function cleanPathFrom(matched) {
+  return matched.map((entry) => entry.route.path).join('/');
+}
+
+function keepAliveMount(outlet, key, renderLeaf) {
+  const cache = outlet.__basedomKeep || (outlet.__basedomKeep = new Map());
+  const max = Number(outlet.getAttribute('x-keep-max') || 8);
+  const include = (outlet.getAttribute('x-keep-include') || '').split(',').map((item) => item.trim()).filter(Boolean);
+  if (include.length && !include.some((item) => key.includes(item))) {
+    mount(renderLeaf, outlet);
+    return;
+  }
+  for (const child of [...outlet.children]) child.style.display = 'none';
+  let node = cache.get(key);
+  if (!node) {
+    node = document.createElement('div');
+    node.setAttribute('data-keep-key', key);
+    mount(renderLeaf, node);
+    cache.set(key, node);
+    while (cache.size > max) {
+      const oldest = cache.keys().next().value;
+      const dropped = cache.get(oldest);
+      cache.delete(oldest);
+      if (dropped && dropped.parentNode) dropped.remove();
+    }
+  }
+  if (node.parentNode !== outlet) outlet.appendChild(node);
+  node.style.display = '';
+}
+
+function statusNode(state, error) {
+  const p = document.createElement('p');
+  p.setAttribute('data-route-state', state);
+  p.setAttribute('role', state === 'error' ? 'alert' : 'status');
+  p.textContent = state === 'error'
+    ? (error && error.message ? error.message : routeStatusText.error)
+    : (typeof error === 'string' && error ? error : routeStatusText.loading);
+  return p;
+}
 
 
 let errorBoundary = null;
@@ -25,6 +93,10 @@ export let rootElementSelector = '#app';
 const [currentView, setCurrentView] = signal(null);
 export { setCurrentView };
 let prevRoutes = [];
+
+export function resetRenderState() {
+  prevRoutes = [];
+}
 const componentCache = new Map();
 
 export function clearComponentCache(path) {
@@ -37,63 +109,24 @@ export function clearComponentCache(path) {
   }
 }
 
-const hmrProxies = new Map();
-
-/**
- * Gets or creates an HMR proxy for a component.
- * @param {string} id - Unique ID for the component (usually the file path).
- * @param {Function} initialFn - The initial component function.
- * @returns {Function} A proxy function that can be updated.
- */
-export function getHMRProxy(id, initialFn) {
-  if (hmrProxies.has(id)) {
-    const [getFn, setFn] = hmrProxies.get(id);
-    if (initialFn) setFn(() => initialFn);
-    return (props) => getFn()(props);
-  }
-  
-  const [getFn, setFn] = signal(() => initialFn);
-  const proxy = (props) => {
-    const fn = getFn();
-    return typeof fn === 'function' ? fn(props) : null;
-  };
-  
-  proxy.__isHMRProxy = true;
-  proxy.__hmrId = id;
-  proxy.update = (newFn) => {
-    setFn(() => newFn);
-  };
-  
-  hmrProxies.set(id, [getFn, setFn, proxy]);
-  return proxy;
-}
-
-// HMR Support for Vite
-if (typeof window !== 'undefined') {
-  window.addEventListener('basedom:hmr', async (e) => {
-    const { file, component } = e.detail;
-    devWarn(`HMR update received for: ${file}`);
-    
-    // Normalize file path to match what might be in the cache
-    const relativePath = file.replace(/.*\/public\//, '/').replace(/.*\/src\//, '/src/');
-    
-    // Update proxy if it exists
-    if (hmrProxies.has(file)) {
-      const [, setFn] = hmrProxies.get(file);
-      setFn(() => component);
-    }
-    
-    clearComponentCache(relativePath);
-    
-    // Re-render the current route to reflect changes
-    if (typeof renderRoute === 'function') {
-      await renderRoute(location.pathname + location.search);
-    }
-  });
-}
-
-
 async function resolveComponent(component) {
+  if (isLazyComponent(component)) {
+    if (!component.__basedomResolved) {
+      const pending = Promise.resolve().then(async () => {
+        const loaded = component.__basedomLazy ? await component.load() : await component();
+        if (typeof loaded === 'function') return loaded;
+        if (loaded && typeof loaded.default === 'function') return loaded.default;
+        throw reportDiagnostic('BD1011', 'Lazy screen did not resolve to a component', {
+          hint: 'Return the component function from loadComponent(), or use the default export of import().'
+        });
+      });
+      component.__basedomResolved = pending.catch((error) => {
+        component.__basedomResolved = null;
+        throw error;
+      });
+    }
+    return component.__basedomResolved;
+  }
   // Normalize to always return a function that accepts props
   // If it's already a function, return it directly to avoid creating an unnecessary wrapper
   if (typeof component === 'function') {
@@ -118,7 +151,8 @@ async function resolveComponent(component) {
     const response = await fetch(componentPath);
     if (!response.ok) throw new Error(`Failed to fetch component: ${componentPath} (status: ${response.status})`);
     const sfcText = await response.text();
-    const fn = await parseComponent(sfcText);
+    const baseUrl = new URL(componentPath, window.location.href).href;
+    const fn = await parseComponent(sfcText, { baseUrl });
     // parsed component is expected to be a function(props) => element
     componentCache.set(componentPath, fn);
     devWarn(`Component loaded and cached: ${componentPath}`);
@@ -165,27 +199,127 @@ export function setRootElement(selector) {
 }
 
 
-async function composeNestedLayouts(matched, params, query) {
+function routeProps(entry, params, query, extras, children, isLeaf) {
+  return {
+    params: { ...entry.params, ...params },
+    query,
+    children,
+    outlet: entry.route.outlet || (isLeaf ? 'main' : undefined),
+    routeData: isLeaf ? extras.routeData : undefined,
+    routeError: isLeaf ? extras.routeError : undefined,
+    routeState: isLeaf ? extras.routeState : undefined
+  };
+}
+
+async function composeNestedLayouts(matched, params, query, extras = {}, leafOverride = null) {
   let childFn = null;
   for (let i = matched.length - 1; i >= 0; i--) {
-    const { route, params: routeParams } = matched[i];
+    const entry = matched[i];
+    const { route } = entry;
+    const isLeaf = i === matched.length - 1;
     devWarn(`Composing layout: ${route.path}`);
-    const componentFn = await resolveComponent(route.componentFn);
+    const componentFn = isLeaf && leafOverride ? leafOverride : await resolveComponent(route.componentFn);
     const currentChild = childFn;
-    childFn = () => {
-      const props = {
-        params: { ...routeParams, ...params },
-        query,
-        children: currentChild,
-        outlet: route.outlet || (i === matched.length - 1 ? 'main' : undefined)
-      };
-      return componentFn(props);
-    };
+    childFn = () => componentFn(routeProps(entry, params, query, extras, currentChild, isLeaf));
   }
   return childFn ? childFn() : null;
 }
 
-export async function renderRoute(pathname) {
+async function paintMatched(matched, params, query, extras, leafOverride) {
+  const newRoutes = matched.map((entry) => entry.route);
+  const outletName = matched[matched.length - 1].route.outlet || 'main';
+  const outlet = findOutlet(outletName);
+  if (leafOverride && outlet) {
+    mount(leafOverride, outlet);
+    if (prevRoutes.length === 0) prevRoutes = newRoutes;
+    return;
+  }
+  if (!leafOverride && isPartialOutletUpdate(prevRoutes, newRoutes) && outlet) {
+    const leaf = matched[matched.length - 1];
+    try {
+      const componentFn = await resolveComponent(leaf.route.componentFn);
+      const renderLeaf = () => componentFn(routeProps(leaf, params, query, extras, undefined, true));
+      if (outlet.hasAttribute('x-keep-alive')) keepAliveMount(outlet, leaf.route.path || cleanPathFrom(matched), renderLeaf);
+      else mount(renderLeaf, outlet);
+    } catch (error) {
+      if (outlet.__basedomBoundary) {
+        outlet.__basedomBoundary(error);
+      } else {
+        mount(() => statusNode('error', error), outlet);
+      }
+    }
+    prevRoutes = newRoutes;
+    return;
+  }
+  const element = await composeNestedLayouts(matched, params, query, extras, leafOverride);
+  setCurrentView(element);
+  prevRoutes = newRoutes;
+}
+
+async function runRouteLoad(matched, params, query, cleanPath, isCurrent) {
+  const leaf = matched[matched.length - 1].route;
+  const result = { routeData: undefined, routeError: null, routeState: 'ready', dropped: false };
+  const warm = isLazyComponent(leaf.componentFn) ? resolveComponent(leaf.componentFn) : null;
+  if (typeof leaf.load !== 'function' && !warm) return result;
+  if (typeof leaf.load === 'function') {
+    result.routeState = 'loading';
+    await paintMatched(matched, params, query, result, () => statusNode('loading', leaf.meta && leaf.meta.loading));
+    if (!isCurrent()) {
+      result.dropped = true;
+      return result;
+    }
+    abortActiveRouteLoad();
+    const controller = new AbortController();
+    activeLoad = controller;
+    try {
+      const data = await leaf.load({ params, query, path: cleanPath, signal: controller.signal });
+      if (!isCurrent() || controller.signal.aborted) {
+        result.dropped = true;
+        return result;
+      }
+      result.routeData = data;
+      result.routeState = 'ready';
+    } catch (error) {
+      if (!isCurrent() || controller.signal.aborted || (error && error.name === 'AbortError')) {
+        result.dropped = true;
+        return result;
+      }
+      result.routeError = error;
+      result.routeState = 'error';
+      reportDiagnostic('BD1010', error && error.message ? error.message : 'Route load failed', {
+        hint: 'The layout stays mounted. Abort when signal is aborted so a newer navigation can drop this result.'
+      });
+      return result;
+    } finally {
+      if (activeLoad === controller) activeLoad = null;
+    }
+  }
+  if (warm && typeof leaf.load !== 'function') {
+    result.routeState = 'loading';
+    await paintMatched(matched, params, query, result, () => statusNode('loading', leaf.meta && leaf.meta.loading));
+    if (!isCurrent()) {
+      result.dropped = true;
+      return result;
+    }
+  }
+  if (warm) {
+    try {
+      await warm;
+    } catch (error) {
+      if (!isCurrent()) {
+        result.dropped = true;
+        return result;
+      }
+      result.routeError = error;
+      result.routeState = 'error';
+      return result;
+    }
+  }
+  return result;
+}
+
+export async function renderRoute(pathname, nav = {}) {
+  const isCurrent = typeof nav.isCurrent === 'function' ? nav.isCurrent : () => true;
   if (!rootElement) {
     devWarn('renderRoute called but rootElement is not set.');
     return;
@@ -205,7 +339,6 @@ export async function renderRoute(pathname) {
     const match = findMatchingRoute(cleanPath);
     if (match) {
       const { matched, params } = match;
-      const newRoutes = matched.map(m => m.route);
       // Set document title from route meta
       const titles = matched.map(m => {
         const t = m.route.meta?.title;
@@ -217,32 +350,14 @@ export async function renderRoute(pathname) {
         document.title = titles.join('')
       }
 
-  // Partial outlet update for leaf route
-  if (isPartialOutletUpdate(prevRoutes, newRoutes)) {
-        const leaf = matched[matched.length - 1];
-        const componentFn = await resolveComponent(leaf.route.componentFn);
-        const outletName = leaf.route.outlet || 'main';
-        const outletSelector = outletName === 'main'
-          ? '[x-outlet], [x-outlet="main"]'
-          : `[x-outlet="${outletName}"]`;
-        const outlet = document.querySelector(outletSelector);
-        if (outlet) {
-          const props = {
-            params: { ...leaf.params, ...match.params },
-            query,
-            children: undefined,
-            outlet: outletName
-          };
-          renderComponent(() => componentFn(props), outlet);
-          prevRoutes = newRoutes;
-          return;
-        } else {
-          devWarn(`Outlet not found: ${outletSelector}`);
-        }
+      const loaded = await runRouteLoad(matched, params, query, cleanPath, isCurrent);
+      if (!isCurrent() || loaded.dropped) return { dropped: true };
+      if (loaded.routeState === 'error') {
+        await paintMatched(matched, params, query, loaded, () => statusNode('error', loaded.routeError));
+        return;
       }
-
-      // Compose nested layouts from matched routes
-      element = await composeNestedLayouts(matched, params, query);
+      await paintMatched(matched, params, query, loaded, null);
+      return;
     } else {
       document.title = '404 Not Found';
       devWarn(`Route not found: ${pathname}`);

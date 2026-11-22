@@ -1,16 +1,23 @@
 {
   "name": "basedom",
   "author": "named666",
-  "version": "0.3.01",
-  "description": "BaseDOM is a lightweight and reactive JavaScript library for building modern user interfaces with fine-grained reactivity.",
-  "main": "index.js",
+  "version": "0.5.0",
+  "description": "Small reactive UI library. Real DOM updates, no virtual DOM, no runtime dependencies.",
+  "main": "./index.js",
   "type": "module",
+  "bin": {
+    "basedom": "./scripts/create.mjs"
+  },
   "files": [
+    "boot.js",
     "components.js",
-    "directives.js",
+    "directives-core.js",
+    "directives-parity.js",
+    "control.js",
+    "store.js",
     "expression.js",
     "fetch.js",
-    "form.js",
+    "fetch-directives.js",
     "html.js",
     "index.js",
     "lifecycle.js",
@@ -20,12 +27,54 @@
     "render.js",
     "router.js",
     "state.js",
-    "store.js",
-    "validation.js",
-    "paths.js"
+    "paths.js",
+    "dev.js",
+    "diagnostics.js",
+    "context.js",
+    "resource.js",
+    "sfc.js",
+    "sfc-compile.js",
+    "hmr-runtime.js",
+    "graph.js",
+    "schema/basedom-graph.schema.json",
+    "vite/plugin.js",
+    "index.d.ts",
+    "docs",
+    "examples",
+    "README.md",
+    "CHANGELOG.md",
+    "scripts/create.mjs",
+    "templates"
   ],
+  "types": "./index.d.ts",
   "exports": {
-    ".": "./index.js"
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./sfc.js": "./sfc.js",
+    "./state.js": "./state.js",
+    "./components.js": "./components.js",
+    "./router.js": "./router.js",
+    "./registry.js": "./registry.js",
+    "./navigation.js": "./navigation.js",
+    "./render.js": "./render.js",
+    "./fetch": "./fetch-directives.js",
+    "./fetch.js": "./fetch.js",
+    "./vite": "./vite/plugin.js"
+  },
+  "scripts": {
+    "test": "node --import ./test/register-dom.js --test test/*.test.js",
+    "test:types": "tsc -p tsconfig.json",
+    "test:graph": "node scripts/check-core-graph.mjs && node --test test/graph.test.js",
+    "test:browser": "node test/browser-spa.mjs",
+    "example": "node scripts/serve-example.js",
+    "example:build": "vite build --config examples/vite-counter/vite.config.js"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.1"
   },
   "keywords": [
     "javascript",

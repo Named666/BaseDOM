@@ -1,0 +1,756 @@
+// directives.js
+import { computed, effect, signal, untrack, unwrapSignal, createOwner, runWithOwner, disposeOwner, getCurrentOwner } from './state.js';
+import { evaluateExpression, childScope } from './expression.js';
+import { reportDiagnostic } from './diagnostics.js';
+import { registerDirective } from './parser.js';
+import { getComponent } from './registry.js';
+
+/** Filled in by directives-parity.js when a template actually uses it. */
+export const optionalHooks = {
+  enter() {},
+  leave(_element, done) { if (typeof done === 'function') done(); },
+  move() {},
+  onEvent() {},
+  model() {},
+  for: null
+};
+import { createComponent } from './components.js';
+import { callOnMountRecursive, callOnUnmountRecursive } from './lifecycle.js';
+
+
+// --- Control Flow Directives ---
+
+export const xIfDirective = {
+    controlFlow: true,
+    // Preprocessing function to filter out paired x-else nodes
+    preprocess: (nodes) => {
+        return nodes.filter((node, index) => {
+            if (node.nodeType === Node.ELEMENT_NODE && node.hasAttribute && node.hasAttribute('x-else')) {
+                // Look for a previous x-if sibling (skipping text nodes)
+                for (let i = index - 1; i >= 0; i--) {
+                    const prevNode = nodes[i];
+                    if (prevNode.nodeType === Node.ELEMENT_NODE && prevNode.hasAttribute && prevNode.hasAttribute('x-if')) {
+                        return false; // Skip this x-else, it's paired with x-if
+                    }
+                    if (prevNode.nodeType === Node.ELEMENT_NODE) {
+                        break; // Found a non-x-if element, stop looking
+                    }
+                }
+            }
+            return true;
+        });
+    },
+    handle: (parsingContext) => {
+        const { node, context, parseNode } = parsingContext;
+        
+        // Check if this directive applies to this node
+        if (!node.hasAttribute || !node.hasAttribute('x-if')) {
+            return null;
+        }
+        
+        const ifDirective = node.getAttribute('x-if');
+
+        // Find the corresponding x-else node by traversing siblings
+        let elseNode = null;
+        let sibling = node.nextSibling;
+        while (sibling) {
+            if (sibling.nodeType === Node.ELEMENT_NODE && sibling.hasAttribute('x-else')) {
+                elseNode = sibling;
+                break;
+            } else if (sibling.nodeType === Node.ELEMENT_NODE) {
+                // Found another element that's not x-else, stop looking
+                break;
+            }
+            sibling = sibling.nextSibling;
+        }
+
+        return computed(() => {
+            try {
+                const shouldShow = evaluateExpression(ifDirective, context);
+                
+                if (shouldShow) {
+                    // Clone the node fresh on each mount to ensure clean lifecycle hooks
+                    const ifNodeClone = node.cloneNode(true);
+                    ifNodeClone.removeAttribute('x-if');
+                    const shown = parseNode(ifNodeClone, context);
+                    if (node.hasAttribute('x-transition')) optionalHooks.enter(shown, node.getAttribute('x-transition') || 'v');
+                    return shown;
+                } else if (elseNode) {
+                    // Clone the node fresh on each mount to ensure clean lifecycle hooks
+                    const elseNodeClone = elseNode.cloneNode(true);
+                    elseNodeClone.removeAttribute('x-else');
+                    return parseNode(elseNodeClone, context);
+                }
+                return null;
+            } catch (error) {
+                warn(`[directives.js/xIfDirective] Error evaluating x-if expression '${ifDirective}':`, error);
+                return null;
+            }
+        });
+    }
+};
+
+export const xElseDirective = {
+    controlFlow: true,
+    handle: (parsingContext) => {
+        const { node } = parsingContext;
+        
+        // Check if this directive applies to this node
+        if (!node.hasAttribute || !node.hasAttribute('x-else')) {
+            return null;
+        }
+
+        // Check for a preceding x-if sibling (skipping text nodes).
+        // If found, this x-else is paired and handled by xIfDirective — stay silent.
+        let sibling = node.previousSibling;
+        while (sibling) {
+            if (sibling.nodeType === Node.ELEMENT_NODE) {
+                if (sibling.hasAttribute && sibling.hasAttribute('x-if')) {
+                    return () => null; // Paired x-else: handled by x-if
+                }
+                break; // Non-x-if element found first: truly standalone
+            }
+            sibling = sibling.previousSibling;
+        }
+
+        // If we reach this point, it means x-else wasn't paired with x-if
+        console.warn('Found standalone x-else directive without corresponding x-if:', node);
+        return null; // Don't render standalone x-else
+    }
+};
+
+function warn(message, extra) {
+    if (typeof window !== 'undefined' && typeof window.devWarn === 'function') window.devWarn(message, extra);
+    else console.warn(message, extra === undefined ? '' : extra);
+}
+
+function interpolateAttribute(text, context) {
+    return text.replace(/\{\{(.*?)\}\}/g, (_, expr) => {
+        const value = evaluateExpression(expr.trim(), context);
+        return value == null ? '' : String(value);
+    });
+}
+
+function realizeRow(rendered) {
+    if (rendered instanceof HTMLElement) return rendered;
+    return createComponent('span', { children: rendered == null ? [] : [rendered] });
+}
+
+/**
+ * x-for keeps real DOM nodes and moves them. Keys come from x-key, otherwise
+ * the index. This is not a virtual DOM: the nodes in the map are the live elements.
+ * Number ranges, object walks, and destructuring load with the optional module.
+ */
+export const xForDirective = {
+    controlFlow: true,
+    handle: (parsingContext) => {
+        const { node } = parsingContext;
+        if (!node.hasAttribute || !node.hasAttribute('x-for')) return null;
+        const expr = node.getAttribute('x-for') || '';
+        if (typeof optionalHooks.for === 'function') return optionalHooks.for(parsingContext);
+        return simpleFor(parsingContext);
+    }
+};
+
+function simpleFor(parsingContext) {
+        const { node, context, parseNode } = parsingContext;
+        const forDirective = node.getAttribute('x-for');
+        const forMatch = forDirective.match(/^(\w+)(?:\s*,\s*(\w+))?\s+in\s+(.+)$/);
+        if (!forMatch) {
+            console.warn(`Invalid x-for expression: ${forDirective}`);
+            return () => [];
+        }
+        const [, itemName, indexName, listExpr] = forMatch;
+        const keyExpr = node.getAttribute('x-key');
+        const nodeClone = node.cloneNode(true);
+        nodeClone.removeAttribute('x-for');
+        if (keyExpr != null) nodeClone.removeAttribute('x-key');
+        const start = document.createComment('x-for');
+        const end = document.createComment('/x-for');
+        const fragment = document.createDocumentFragment();
+        Object.defineProperty(fragment, '__live', { value: true });
+        fragment.append(start, end);
+        const rows = new Map();
+        const stop = effect(() => {
+            let items;
+            try { items = unwrapSignal(evaluateExpression(listExpr.trim(), context)); }
+            catch (error) {
+                warn(`[directives.js/xForDirective] Error evaluating x-for expression '${listExpr}':`, error);
+                items = [];
+            }
+            if (!Array.isArray(items)) items = [];
+            const seen = new Set();
+            const nextKeys = [];
+            items.forEach((item, index) => {
+                let key = index;
+                if (keyExpr) {
+                    const keyContext = { ...context, [itemName]: signal(item)[0] };
+                    if (indexName) keyContext[indexName] = signal(index)[0];
+                    const evaluated = evaluateExpression(keyExpr, keyContext);
+                    if (evaluated != null && evaluated !== '') key = evaluated;
+                }
+                if (seen.has(key)) key = `${String(key)}#${index}`;
+                seen.add(key);
+                nextKeys.push(key);
+                const existing = rows.get(key);
+                if (existing) { existing.setItem(item); existing.setIndex(index); return; }
+                rows.set(key, untrack(() => createRow(item, index)));
+            });
+            for (const [key, row] of [...rows]) {
+                if (seen.has(key)) continue;
+                if (row.el.parentNode) { callOnUnmountRecursive(row.el); row.el.remove(); }
+                row.dispose();
+                rows.delete(key);
+            }
+            const parent = end.parentNode;
+            if (!parent) return;
+            for (const key of nextKeys) {
+                const row = rows.get(key);
+                if (row && row.el !== end.previousSibling) parent.insertBefore(row.el, end);
+            }
+            if (end.isConnected) {
+                for (const key of nextKeys) {
+                    const row = rows.get(key);
+                    if (row && !row.el.__mounted) callOnMountRecursive(row.el);
+                }
+            }
+        });
+        end.__dispose = stop;
+        function createRow(item, index) {
+            const owner = createOwner();
+            const [getItem, setItem] = signal(item);
+            const [getIndex, setIndex] = signal(index);
+            const loopContext = { ...context, [itemName]: getItem };
+            if (indexName) loopContext[indexName] = getIndex;
+            else loopContext[`${itemName}Index`] = getIndex;
+            let el;
+            runWithOwner(owner, () => { el = realizeRow(parseNode(nodeClone.cloneNode(true), loopContext)); });
+            const row = { el, setItem, setIndex, dispose: () => disposeOwner(owner) };
+            if (import.meta.hot && el) el.__basedomForRow = row;
+            return row;
+        }
+        return fragment;
+}
+
+// --- Attribute Processing Directives ---
+
+export const xOnDirective = {
+    controlFlow: false,
+    handle: (parsingContext, props) => {
+        const { node, context } = parsingContext;
+        if (!node.attributes) return;
+        for (const attr of node.attributes) {
+            let spec = '';
+            if (attr.name.startsWith('x-on:')) spec = attr.name.slice(5);
+            else if (attr.name.startsWith('@')) spec = attr.name.slice(1);
+            if (!spec) continue;
+            if (spec.includes('.') || spec.startsWith('[')) {
+                optionalHooks.onEvent(parsingContext, props, attr, spec);
+                continue;
+            }
+            let eventName = spec.toLowerCase();
+            if (eventName === 'hover' || eventName === 'enter') eventName = 'mouseenter';
+            if (eventName === 'leave') eventName = 'mouseleave';
+            const handlerExpr = attr.value;
+            props[`on${eventName}`] = (event) => {
+                const eventContext = {
+                    ...context,
+                    $event: event,
+                    $target: event && event.target,
+                    $currentTarget: event && event.currentTarget
+                };
+                const result = evaluateExpression(handlerExpr, eventContext);
+                if (typeof result === 'function') result(event);
+            };
+        }
+    }
+};
+
+export const xBindDirective = {
+    controlFlow: false,
+    handle: (parsingContext, props) => {
+        const { node, context } = parsingContext;
+        
+        // Check if this node has any x-bind: attributes
+        if (!node.attributes) return;
+        
+        for (const attr of node.attributes) {
+            if (attr.name === 'x-bind' || attr.name === ':') {
+                const expr = attr.value.trim();
+                const previous = props.onMount;
+                props.onMount = (element) => {
+                    if (typeof previous === 'function') previous(element);
+                    const stop = effect(() => {
+                        const bag = evaluateExpression(expr, context);
+                        if (!bag || typeof bag !== 'object') return;
+                        for (const [key, entry] of Object.entries(bag)) {
+                            const next = typeof entry === 'function' ? entry() : entry;
+                            if (next == null || next === false) element.removeAttribute(key);
+                            else element.setAttribute(key, next === true ? '' : String(next));
+                        }
+                    });
+                    const prior = element.__onUnmount;
+                    element.__onUnmount = (...args) => {
+                        stop();
+                        if (typeof prior === 'function') prior(...args);
+                    };
+                };
+                continue;
+            }
+            let propName = null;
+            if (attr.name.startsWith('x-bind:')) propName = attr.name.slice(7);
+            else if (attr.name.startsWith(':') && !attr.name.startsWith('::')) propName = attr.name.slice(1);
+            if (!propName) continue;
+            const expr = attr.value.trim().replace(/^\{\{|\}\}$/g, '').trim();
+            if (propName.startsWith('[') && propName.endsWith(']')) {
+                const keyExpr = propName.slice(1, -1);
+                const previous = props.onMount;
+                props.onMount = (element) => {
+                    if (typeof previous === 'function') previous(element);
+                    let lastName = '';
+                    const stop = effect(() => {
+                        const name = evaluateExpression(keyExpr, context);
+                        const next = evaluateExpression(expr, context);
+                        if (lastName && lastName !== name) element.removeAttribute(lastName);
+                        lastName = name ? String(name) : '';
+                        if (lastName) element.setAttribute(lastName, next == null ? '' : String(next));
+                    });
+                    const prior = element.__onUnmount;
+                    element.__onUnmount = (...args) => {
+                        stop();
+                        if (typeof prior === 'function') prior(...args);
+                    };
+                };
+                continue;
+            }
+            props[propName] = computed(() => evaluateExpression(expr, context));
+        }
+    }
+};
+
+export const xShowDirective = {
+    controlFlow: false,
+    handle: (parsingContext, props) => {
+        const { node, context } = parsingContext;
+        
+        // Check if this node has x-show attribute
+        if (!node.hasAttribute || !node.hasAttribute('x-show')) return;
+        
+        const showExpr = node.getAttribute('x-show');
+        if (!props.style) props.style = {};
+        props.style.display = computed(() => {
+            try {
+                const shouldShow = evaluateExpression(showExpr, context);
+                return shouldShow ? '' : 'none';
+            } catch (error) {
+                warn(`[directives.js/xShowDirective] Error evaluating x-show expression '${showExpr}':`, error);
+                return 'none'; // Default to hidden on error
+            }
+        });
+    }
+};
+
+export const xModelDirective = {
+    controlFlow: false,
+    handle: (parsingContext, props) => {
+        const { node, context } = parsingContext;
+        const modelAttr = [...(node.attributes || [])].find((attr) => attr.name === 'x-model' || attr.name.startsWith('x-model.') || attr.name.startsWith('x-model:'));
+        if (!modelAttr) return;
+        if (modelAttr.name !== 'x-model') {
+            optionalHooks.model(parsingContext, props, modelAttr);
+            return;
+        }
+        const modelProp = 'modelValue';
+
+        const modelExpr = modelAttr.value.trim();
+        let signal = context[modelExpr];
+
+        // Support signals as [getter, setter] pairs
+        let getter, setter;
+        if (typeof signal === 'function') {
+            getter = signal;
+            setter = signal.set || context[`set${modelExpr.charAt(0).toUpperCase() + modelExpr.slice(1)}`];
+        } else if (Array.isArray(signal) && signal.length === 2 && typeof signal[0] === 'function' && typeof signal[1] === 'function') {
+            getter = signal[0];
+            setter = signal[1];
+        } else {
+            // Try to find getter/setter in context
+            getter = () => signal;
+            setter = context[`set${modelExpr.charAt(0).toUpperCase() + modelExpr.slice(1)}`];
+        }
+
+        if (!getter || typeof getter !== 'function' || !setter || typeof setter !== 'function') {
+            reportDiagnostic('BD1003', `x-model "${modelExpr}" needs a signal getter with .set, or a setter named set${modelExpr.charAt(0).toUpperCase()}${modelExpr.slice(1)}`, {
+              expression: modelExpr,
+              hint: 'Return the signal getter from setup. A tuple [get, set] also works.'
+            });
+            return;
+        }
+
+        if (getComponent(node.tagName)) {
+            props[modelProp] = computed(() => getter());
+            props[`onupdate:${modelProp.toLowerCase()}`] = (value) => setter(value);
+            return;
+        }
+
+        if (!props.attrs) props.attrs = {};
+        const tagName = node.tagName.toLowerCase();
+        const type = node.getAttribute('type');
+        if (tagName === 'input' && type === 'checkbox') {
+            props.attrs.checked = computed(() => Boolean(getter()));
+            props.onChange = (event) => setter(event.target.checked);
+        } else if (tagName === 'input' && type === 'radio') {
+            const option = node.getAttribute('value') ?? '';
+            props.attrs.checked = computed(() => getter() === option);
+            props.onChange = (event) => {
+                if (event.target.checked) setter(option);
+            };
+        } else if (tagName === 'input' && (type === 'number' || type === 'range')) {
+            props.attrs.value = computed(() => {
+                const current = getter();
+                return current == null || Number.isNaN(current) ? '' : String(current);
+            });
+            const writeNumber = (event) => {
+                const raw = event.target.value;
+                if (raw === '') setter(null);
+                else {
+                    const parsed = Number(raw);
+                    setter(Number.isNaN(parsed) ? null : parsed);
+                }
+            };
+            props.onInput = writeNumber;
+            props.onChange = writeNumber;
+        } else if (tagName === 'input' || tagName === 'textarea') {
+            props.attrs.value = computed(() => {
+                const current = getter();
+                return current == null ? '' : String(current);
+            });
+            const inputHandler = (event) => setter(event.target.value);
+            props.onInput = inputHandler;
+            props.onChange = inputHandler;
+        } else if (tagName === 'select') {
+            props.attrs.value = computed(() => {
+                const current = getter();
+                return current == null ? '' : String(current);
+            });
+            props.onChange = (event) => setter(event.target.value);
+        }
+    }
+};
+
+// --- Lifecycle Hook Directives ---
+
+export const xMountDirective = {
+    controlFlow: false,
+    handle: (parsingContext, props) => {
+        const { node, context } = parsingContext;
+        
+        // Check if this node has x-mount attribute
+        if (!node.hasAttribute || !node.hasAttribute('x-mount')) return;
+        
+        const mountExpr = node.getAttribute('x-mount');
+        const handler = evaluateExpression(mountExpr, context);
+        
+        if (typeof handler === 'function') {
+            props.onMount = handler;
+        }
+    }
+};
+
+export const xUnmountDirective = {
+    controlFlow: false,
+    handle: (parsingContext, props) => {
+        const { node, context } = parsingContext;
+        
+        // Check if this node has x-unmount attribute
+        if (!node.hasAttribute || !node.hasAttribute('x-unmount')) return;
+        
+        const unmountExpr = node.getAttribute('x-unmount');
+        const handler = evaluateExpression(unmountExpr, context);
+        
+        if (typeof handler === 'function') {
+            props.onUnmount = handler;
+        }
+    }
+};
+
+export const xUpdateDirective = {
+    controlFlow: false,
+    handle: (parsingContext, props) => {
+        const { node, context } = parsingContext;
+        
+        // Check if this node has x-update attribute
+        if (!node.hasAttribute || !node.hasAttribute('x-update')) return;
+        
+        const updateExpr = node.getAttribute('x-update');
+        const handler = evaluateExpression(updateExpr, context);
+        
+        if (typeof handler === 'function') {
+            props.onUpdate = handler;
+        }
+    }
+};
+
+export const defaultDirective = {
+    controlFlow: false,
+    handle: (parsingContext, props) => {
+        const { node } = parsingContext;
+        for (const attr of node.attributes) {
+            const name = attr.name;
+            if (
+                name.startsWith('x-on:') ||
+                name.startsWith('@') ||
+                name.startsWith('x-bind:') ||
+                name.startsWith(':') ||
+                name === 'x-show' ||
+                name === 'x-model' ||
+                name === 'x-key' ||
+                name === 'x-ref' ||
+                name === 'x-slot' ||
+                name === 'x-if' ||
+                name === 'x-else' ||
+                name === 'x-for' ||
+                name === 'x-mount' ||
+                name === 'x-unmount' ||
+                name === 'x-update'
+            ) continue;
+            props.attrs[name] = name !== 'x-link' && attr.value.includes('{{')
+                ? computed(() => interpolateAttribute(attr.value, context))
+                : attr.value;
+        }
+    }
+};
+
+// --- Slot Directive Implementation ---
+// Handles <slot> and x-slot in parent templates
+export const slotDirective = {
+    controlFlow: true,
+    handle: ({ node, context }) => {
+        if (!node.tagName || node.tagName.toLowerCase() !== 'slot') return null;
+        // Get slot name (default is 'default')
+        const slotName = node.getAttribute('name') || 'default';
+        // Collect slot props (attributes starting with ':')
+        const slotProps = {};
+        for (const attr of Array.from(node.attributes || [])) {
+            if (attr.name.startsWith(':')) {
+                const propName = attr.name.slice(1);
+                const expr = attr.value;
+                // Live getter so a scoped slot updates when the child changes.
+                slotProps[propName] = computed(() => evaluateExpression(expr, context));
+            }
+        }
+        // Find slot content in context
+        const slotContent = context && context.__slots && context.__slots[slotName];
+        if (slotContent) {
+            return () => {
+                const rendered = typeof slotContent === 'function' ? slotContent(slotProps) : slotContent;
+                return stampSlot(rendered);
+            };
+        }
+        if (slotName === 'default') {
+            const children = context && context.children !== undefined ? context.children : '';
+            return () => stampSlot(typeof children === 'function' ? children() : children);
+        }
+        return '';
+    }
+};
+
+function stampSlot(node) {
+    if (Array.isArray(node)) {
+        node.forEach(stampSlot);
+        return node;
+    }
+    if (node instanceof Element) node.setAttribute('data-basedom-slot', '');
+    return node;
+}
+
+// <div x-slot="usercard">...</div> registers slot content for <slot name="usercard">
+export const xSlotDirective = {
+    controlFlow: true,
+    handle: ({ node, context, parseNode }) => {
+        if (!node.hasAttribute || !node.hasAttribute('x-slot')) return null;
+        const slotName = node.getAttribute('x-slot') || 'default';
+        // Remove x-slot attribute to avoid recursion
+        const nodeClone = node.cloneNode(true);
+        nodeClone.removeAttribute('x-slot');
+        // Register slot content in context.__slots
+        if (!context.__slots) context.__slots = {};
+        // Slot content is a function that receives slotProps
+        context.__slots[slotName] = (slotProps = {}) => {
+            // Parent names stay visible. Slot props are added as own names.
+            const slotContext = childScope(context);
+            for (const [key, value] of Object.entries(slotProps || {})) slotContext[key] = value;
+            try {
+                if (nodeClone.tagName && nodeClone.tagName.toLowerCase() === 'template') {
+                    const contentRoot = nodeClone.content || nodeClone;
+                    const children = Array.from(contentRoot.childNodes || []).map(n => parseNode(n, slotContext)).filter(Boolean);
+                    return children.length === 1 ? children[0] : children;
+                }
+            } catch (e) {
+                // fall back to parsing the node itself on error
+            }
+            return parseNode(nodeClone, slotContext);
+        };
+        // Registered above. Keep it out of the default children list.
+        const hide = () => null;
+        hide.__basedomSlot = true;
+        return hide;
+    }
+};
+
+
+export const xRefDirective = {
+    controlFlow: false,
+    handle: (parsingContext, props) => {
+        const { node, context } = parsingContext;
+        
+        // Check if this node has x-ref attribute
+        if (!node.hasAttribute || !node.hasAttribute('x-ref')) return;
+        
+        const refExpr = node.getAttribute('x-ref');
+        const refName = evaluateExpression(refExpr, context);
+        if (typeof refName !== 'string' || !refName) return;
+        const previous = props.onMount;
+        props.onMount = (element) => {
+            if (typeof previous === 'function') previous(element);
+            const exposed = element.__basedomExposed || element;
+            const current = context[refName];
+            if (current && typeof current.set === 'function') current.set(exposed);
+            else context[refName] = exposed;
+        };
+    }
+};
+
+/**
+ * Renders the active route inside a layout. The element stays in the document
+ * so the router can replace its contents without rebuilding the layout.
+ */
+export const xOutletDirective = {
+    controlFlow: true,
+    handle({ node, context }) {
+        if (!node.hasAttribute || !node.hasAttribute('x-outlet')) return null;
+        const name = node.getAttribute('x-outlet') || 'main';
+        const host = document.createElement(node.tagName.toLowerCase());
+        host.setAttribute('x-outlet', name);
+        for (const attr of [...node.attributes]) {
+            if (attr.name !== 'x-outlet') host.setAttribute(attr.name, attr.value);
+        }
+        const owner = getCurrentOwner();
+        if (owner) host.__basedomOwner = owner;
+        const child = context && context.children;
+        const content = typeof child === 'function' ? child() : child;
+        if (content instanceof Node) host.appendChild(content);
+        else if (content != null && content !== false && content !== '') host.textContent = String(content);
+        return host;
+    }
+};
+
+/**
+ * Catches errors thrown while rendering this subtree, and errors thrown by
+ * effects created in it. Shows fallback markup and a reset control.
+ * Does not catch errors from event handlers or timers.
+ */
+export const xBoundaryDirective = {
+    controlFlow: true,
+    handle({ node, context, parseNode }) {
+        if (!node.hasAttribute || !node.hasAttribute('x-boundary')) return null;
+        const message = node.getAttribute('x-boundary') || 'This screen failed.';
+        const isOutlet = node.hasAttribute('x-outlet');
+        const outletName = node.getAttribute('x-outlet') || 'main';
+        const host = document.createElement(node.tagName.toLowerCase());
+        for (const attr of [...node.attributes]) {
+            if (attr.name === 'x-boundary') continue;
+            host.setAttribute(attr.name, attr.value);
+        }
+        host.setAttribute('x-boundary', message);
+        const boundaryOwner = createOwner();
+        let showing = false;
+        const show = (error) => {
+            if (showing) return;
+            showing = true;
+            try {
+                reportDiagnostic('BD1007', error && error.message ? error.message : 'Component render failed', {
+                    hint: 'The boundary kept the rest of the page mounted. Reset renders the subtree again. Event handlers and timers are not caught.'
+                });
+                callOnUnmountRecursive(host);
+                host.replaceChildren();
+                host.appendChild(boundaryFallback(message, error, () => {
+                    showing = false;
+                    render();
+                }));
+            } finally {
+                showing = false;
+            }
+        };
+        boundaryOwner.boundary = show;
+        host.__basedomOwner = boundaryOwner;
+        host.__basedomBoundary = show;
+        const contentNodes = [...node.childNodes].filter((child) => {
+            return !(child.nodeType === Node.ELEMENT_NODE && child.hasAttribute && child.hasAttribute('x-fallback'));
+        });
+        function render() {
+            callOnUnmountRecursive(host);
+            host.replaceChildren();
+            try {
+                runWithOwner(boundaryOwner, () => {
+                    if (isOutlet) {
+                        const child = context && context.children;
+                        const content = typeof child === 'function' ? child() : child;
+                        if (host.querySelector('[data-boundary-fallback]')) {
+                            if (content && content.__basedomOwner) disposeOwner(content.__basedomOwner);
+                            return;
+                        }
+                        if (content instanceof Node) host.appendChild(content);
+                        else if (content != null && content !== false && content !== '') host.textContent = String(content);
+                    } else if (!host.querySelector('[data-boundary-fallback]')) {
+                        const shell = createComponent('div', {
+                            children: contentNodes.map((child) => parseNode(child, context)).filter((child) => child != null && child !== '')
+                        });
+                        shell.style.display = 'contents';
+                        host.appendChild(shell);
+                    }
+                });
+            } catch (error) {
+                show(error);
+            }
+        }
+        render();
+        return host;
+    }
+};
+
+function boundaryFallback(message, error, reset) {
+    const box = document.createElement('div');
+    box.setAttribute('data-boundary-fallback', '');
+    const alert = document.createElement('p');
+    alert.setAttribute('role', 'alert');
+    alert.textContent = message;
+    const detail = document.createElement('pre');
+    detail.textContent = error && error.message ? error.message : String(error);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.boundaryReset = '';
+    button.textContent = 'Reset';
+    button.addEventListener('click', reset);
+    box.append(alert, detail, button);
+    return box;
+}
+
+// Register built-in directives
+registerDirective('x-boundary', xBoundaryDirective);
+registerDirective('x-outlet', xOutletDirective);
+registerDirective('slot', slotDirective);
+registerDirective('x-slot', xSlotDirective);
+registerDirective('x-if', xIfDirective);
+registerDirective('x-else', xElseDirective);
+registerDirective('x-for', xForDirective);
+registerDirective('x-on', xOnDirective);
+registerDirective('@', xOnDirective);
+registerDirective('x-bind', xBindDirective);
+registerDirective('x-show', xShowDirective);
+registerDirective('x-model', xModelDirective);
+registerDirective('x-ref', xRefDirective);
+registerDirective('x-mount', xMountDirective);
+registerDirective('x-unmount', xUnmountDirective);
+registerDirective('x-update', xUpdateDirective);
+registerDirective('default', defaultDirective);
